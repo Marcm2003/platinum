@@ -1,0 +1,27 @@
+node_modules/
+dist/
+dist-electron/
+release/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*
+mac-agent/build/
+firmware/**/build/
+
+# Never commit Apple ROMs or disk images: they're copyrighted and/or huge.
+*.rom
+*.ROM
+vMac.ROM
+*.dsk
+*.img
+*.image
+*.hda
+*.hfs
+*.dc42
+*.iso
+*.toast
+*.cdr
+*.sit
+*.hqx

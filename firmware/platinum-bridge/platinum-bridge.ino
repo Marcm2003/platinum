@@ -1,0 +1,380 @@
+// Platinum Bridge — ESP32 firmware that connects a classic Macintosh to the Platinum desktop app.
+//
+//  • Emulates an ADB keyboard + mouse (SE and later) or an M0110A keyboard + quadrature mouse (128K/512K/Plus)
+//  • Pairs Bluetooth LE keyboards and mice and forwards them to the Mac
+//  • Bridges the Mac's RS-422 serial port (Platinum Agent) to the app
+//  • Talks to the app over USB, WebSocket (ws://platinum.local:81) or BLE (Nordic UART)
+//
+// Protocol: newline-delimited JSON, see docs/protocol.md.
+
+#include <Arduino.h>
+#include <ArduinoJson.h>
+#include <ESPmDNS.h>
+#include <NimBLEDevice.h>
+#include <Preferences.h>
+#include <WebSocketsServer.h>
+#include <WiFi.h>
+#include <WiFiUdp.h>
+#include <mbedtls/base64.h>
+
+#include "adb.h"
+#include "blehid.h"
+#include "config.h"
+#include "m0110.h"
+
+static Preferences prefs;
+static WebSocketsServer ws(WS_PORT);
+static WiFiUDP udp;
+static HardwareSerial& macSerial = Serial1;
+
+static String bridgeName = FW_NAME;
+static String mode = "adb";  // "adb" | "m0110"
+static uint32_t macBaud = MAC_DEFAULT_BAUD;
+static bool apMode = false;
+static uint32_t pswUntil = 0;
+
+// ───────── Output to every connected client ─────────
+
+static NimBLECharacteristic* nusTx = nullptr;
+static volatile bool bleClient = false;
+
+static void out(const String& line) {
+  Serial.println(line);
+  if (ws.connectedClients()) ws.broadcastTXT(line);
+  if (bleClient && nusTx) {
+    String l = line + "\n";
+    const size_t chunk = 180;
+    for (size_t i = 0; i < l.length(); i += chunk) {
+      nusTx->setValue((const uint8_t*)l.c_str() + i, min(chunk, l.length() - i));
+      nusTx->notify();
+    }
+  }
+}
+
+static void logf(const char* fmt, ...) {
+  char buf[200];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof buf, fmt, ap);
+  va_end(ap);
+  JsonDocument d;
+  d["t"] = "log";
+  d["m"] = buf;
+  String s;
+  serializeJson(d, s);
+  out(s);
+}
+
+// ───────── Input routing ─────────
+
+static void sendKey(uint8_t code, bool down) {
+  if (mode == "adb") adb::key(code, down); else m0110::key(code, down);
+}
+static void sendMouse(int dx, int dy, bool b) {
+  if (mode == "adb") adb::mouse(dx, dy, b); else m0110::mouse(dx, dy, b);
+}
+
+// ───────── Status ─────────
+
+static bool macPolling() {
+  uint32_t last = mode == "adb" ? adb::stats().lastTalkMs : m0110::lastCommandMs();
+  return last && millis() - last < 1500;
+}
+
+static void sendInfo() {
+  JsonDocument d;
+  d["t"] = "info";
+  d["fw"] = FW_VERSION;
+  d["board"] = BOARD_ID;
+  d["name"] = bridgeName;
+  d["mode"] = mode;
+  d["baud"] = macBaud;
+  d["heap"] = ESP.getFreeHeap();
+  d["uptime"] = millis() / 1000;
+  d["macPolling"] = macPolling();
+  if (WiFi.status() == WL_CONNECTED) {
+    d["ip"] = WiFi.localIP().toString();
+    d["ssid"] = WiFi.SSID();
+    d["rssi"] = WiFi.RSSI();
+  } else if (apMode) {
+    d["ip"] = WiFi.softAPIP().toString();
+    d["ssid"] = WiFi.softAPSSID();
+    d["rssi"] = 0;
+  }
+  if (mode == "adb") {
+    adb::Stats s = adb::stats();
+    d["adbAddr"]["kbd"] = s.kbdAddr;
+    d["adbAddr"]["mouse"] = s.mouseAddr;
+  }
+  String s;
+  serializeJson(d, s);
+  out(s);
+}
+
+static void sendBleList() {
+  out(String("{\"t\":\"ble\",\"list\":") + blehid::listJson() + "}");
+}
+
+// ───────── ADB / keyboard bus events (queued from the bus task) ─────────
+
+struct BusEvent { char ev[8]; uint8_t addr, reg; };
+static QueueHandle_t busEvents;
+
+static void onAdbEvent(const char* ev, uint8_t addr, uint8_t reg) {
+  BusEvent e = {};
+  strncpy(e.ev, ev, sizeof e.ev - 1);
+  e.addr = addr;
+  e.reg = reg;
+  xQueueSend(busEvents, &e, 0);
+}
+
+// ───────── Mac serial port ⇄ app ─────────
+
+static uint8_t serBuf[192];
+static size_t serLen = 0;
+static uint32_t serLast = 0;
+
+static void flushSerial() {
+  if (!serLen) return;
+  unsigned char b64[300];
+  size_t olen = 0;
+  mbedtls_base64_encode(b64, sizeof b64, &olen, serBuf, serLen);
+  b64[olen] = 0;
+  out(String("{\"t\":\"ser\",\"d\":\"") + (const char*)b64 + "\"}");
+  serLen = 0;
+}
+
+static void pumpMacSerial() {
+  while (macSerial.available()) {
+    serBuf[serLen++] = macSerial.read();
+    serLast = micros();
+    if (serLen == sizeof serBuf) flushSerial();
+  }
+  if (serLen && micros() - serLast > 3000) flushSerial();
+}
+
+// ───────── Command handling ─────────
+
+static void applyMode(const String& m) {
+  if (m == mode) return;
+  if (mode == "adb") adb::end(); else m0110::end();
+  mode = m;
+  if (mode == "adb") adb::begin(); else m0110::begin();
+  prefs.putString("mode", mode);
+  logf("Mode %s", mode.c_str());
+}
+
+static void handleLine(const char* line, size_t len) {
+  JsonDocument d;
+  if (deserializeJson(d, line, len)) return;
+  const char* t = d["t"] | "";
+
+  if (!strcmp(t, "key")) sendKey(d["c"] | 0, (d["d"] | 0) != 0);
+  else if (!strcmp(t, "mouse")) sendMouse(d["dx"] | 0, d["dy"] | 0, (d["b"] | 0) != 0);
+  else if (!strcmp(t, "ser")) {
+    const char* s = d["d"] | "";
+    unsigned char bin[768];
+    size_t olen = 0;
+    if (!mbedtls_base64_decode(bin, sizeof bin, &olen, (const unsigned char*)s, strlen(s))) macSerial.write(bin, olen);
+  }
+  else if (!strcmp(t, "hello")) { sendInfo(); sendBleList(); }
+  else if (!strcmp(t, "power")) { digitalWrite(PIN_ADB_PSW, HIGH); pswUntil = millis() + 400; logf("Power-on"); }
+  else if (!strcmp(t, "cfg")) {
+    if (d["mode"].is<const char*>()) applyMode(d["mode"].as<String>());
+    if (d["baud"].is<uint32_t>()) { macBaud = d["baud"]; macSerial.updateBaudRate(macBaud); prefs.putUInt("baud", macBaud); }
+    if (d["name"].is<const char*>()) { bridgeName = d["name"].as<String>(); prefs.putString("name", bridgeName); }
+    if (d["invertX"].is<bool>() || d["invertY"].is<bool>()) m0110::setInvert(d["invertX"] | false, d["invertY"] | false);
+    sendInfo();
+  }
+  else if (!strcmp(t, "wifi")) {
+    prefs.putString("ssid", d["ssid"] | "");
+    prefs.putString("pass", d["pass"] | "");
+    logf("WiFi saved, restarting…");
+    delay(300);
+    ESP.restart();
+  }
+  else if (!strcmp(t, "ble_scan")) { blehid::scan(8000); logf("Scanning for BLE devices…"); }
+  else if (!strcmp(t, "ble_pair")) { String a = d["addr"] | ""; logf(blehid::pair(a) ? "Paired %s" : "Could not pair %s", a.c_str()); sendBleList(); }
+  else if (!strcmp(t, "ble_forget")) { blehid::forget(d["addr"] | ""); sendBleList(); }
+  else if (!strcmp(t, "reboot")) { delay(100); ESP.restart(); }
+}
+
+// Line assemblers for each transport.
+struct LineBuf {
+  char buf[1400];
+  size_t n = 0;
+  void feed(const uint8_t* data, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+      char c = data[i];
+      if (c == '\n') { if (n) handleLine(buf, n); n = 0; }
+      else if (n < sizeof buf - 1) buf[n++] = c;
+    }
+  }
+};
+static LineBuf usbLine;
+
+// BLE NUS writes arrive on the NimBLE task; hand them to loop() through a stream buffer.
+static StreamBufferHandle_t bleRx;
+static LineBuf bleLine;
+
+class NusRxCb : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* c, NimBLEConnInfo&) override {
+    NimBLEAttValue v = c->getValue();
+    xStreamBufferSend(bleRx, v.data(), v.length(), 0);
+  }
+};
+class ServerCb : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer*, NimBLEConnInfo&) override { bleClient = true; }
+  void onDisconnect(NimBLEServer*, NimBLEConnInfo&, int) override { bleClient = false; NimBLEDevice::startAdvertising(); }
+};
+static NusRxCb nusRxCb;
+static ServerCb serverCb;
+
+static void wsEvent(uint8_t num, WStype_t type, uint8_t* payload, size_t length) {
+  if (type == WStype_TEXT) {
+    static LineBuf wsLine;
+    wsLine.feed(payload, length);
+    const uint8_t nl = '\n';
+    wsLine.feed(&nl, 1);
+  } else if (type == WStype_CONNECTED) {
+    sendInfo();
+  }
+}
+
+// ───────── Setup ─────────
+
+static void setupBle() {
+  NimBLEDevice::init(bridgeName.c_str());
+  NimBLEServer* server = NimBLEDevice::createServer();
+  server->setCallbacks(&serverCb);
+  NimBLEService* nus = server->createService("6E400001-B5A3-F393-E0A9-E50E24DCCA9E");
+  NimBLECharacteristic* rx = nus->createCharacteristic("6E400002-B5A3-F393-E0A9-E50E24DCCA9E", NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+  rx->setCallbacks(&nusRxCb);
+  nusTx = nus->createCharacteristic("6E400003-B5A3-F393-E0A9-E50E24DCCA9E", NIMBLE_PROPERTY::NOTIFY);
+  nus->start();
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  adv->setName(bridgeName.c_str());
+  adv->addServiceUUID(nus->getUUID());
+  adv->enableScanResponse(true);
+  adv->start();
+
+  blehid::begin(
+    [](uint8_t code, bool down) {
+      sendKey(code, down);
+      out(String("{\"t\":\"hid\",\"kind\":\"key\",\"code\":") + code + ",\"down\":" + (down ? "true" : "false") + "}");
+    },
+    [](int dx, int dy, bool b) { sendMouse(dx, dy, b); });
+}
+
+static void setupWifi() {
+  String ssid = prefs.getString("ssid", ""), pass = prefs.getString("pass", "");
+  WiFi.setHostname(MDNS_NAME);
+  if (ssid.length()) {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid.c_str(), pass.c_str());
+    for (int i = 0; i < 120 && WiFi.status() != WL_CONNECTED; i++) delay(100);
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    uint8_t mac[6];
+    WiFi.macAddress(mac);
+    char ap[24];
+    snprintf(ap, sizeof ap, "Platinum-%02X%02X", mac[4], mac[5]);
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(ap, AP_PASSWORD);
+    apMode = true;
+  }
+  if (MDNS.begin(MDNS_NAME)) MDNS.addService("platinum", "tcp", WS_PORT);
+  ws.begin();
+  ws.onEvent(wsEvent);
+  udp.begin(DISCOVERY_PORT);
+}
+
+static void setLed(uint8_t r, uint8_t g, uint8_t b) {
+#if LED_IS_RGB
+  rgbLedWrite(PIN_LED, r, g, b);
+#else
+  digitalWrite(PIN_LED, (r | g | b) ? HIGH : LOW);
+#endif
+}
+
+void setup() {
+  Serial.begin(USB_BAUD);
+#if !LED_IS_RGB
+  pinMode(PIN_LED, OUTPUT);
+#endif
+  setLed(0, 0, 24);
+  pinMode(PIN_ADB_PSW, OUTPUT);
+  digitalWrite(PIN_ADB_PSW, LOW);
+
+  prefs.begin("platinum", false);
+  bridgeName = prefs.getString("name", FW_NAME);
+  mode = prefs.getString("mode", "adb");
+  macBaud = prefs.getUInt("baud", MAC_DEFAULT_BAUD);
+
+  macSerial.begin(macBaud, SERIAL_8N1, PIN_SER_RX, PIN_SER_TX);
+  macSerial.setRxBufferSize(4096);
+
+  busEvents = xQueueCreate(16, sizeof(BusEvent));
+  bleRx = xStreamBufferCreate(2048, 1);
+  adb::onEvent = onAdbEvent;
+  if (mode == "adb") adb::begin(); else m0110::begin();
+
+  setupBle();
+  setupWifi();
+  logf("%s v%s ready (%s, %s)", FW_NAME, FW_VERSION, BOARD_ID, mode.c_str());
+  sendInfo();
+}
+
+// ───────── Loop ─────────
+
+void loop() {
+  static uint32_t lastInfo = 0, lastTalkReport = 0, lastTalks = 0;
+
+  while (Serial.available()) {
+    uint8_t b[64];
+    size_t n = Serial.readBytes(b, min((int)sizeof b, Serial.available()));
+    usbLine.feed(b, n);
+  }
+  uint8_t bb[128];
+  size_t bn;
+  while ((bn = xStreamBufferReceive(bleRx, bb, sizeof bb, 0)) > 0) bleLine.feed(bb, bn);
+
+  ws.loop();
+  pumpMacSerial();
+
+  int pkt = udp.parsePacket();
+  if (pkt) {
+    char q[16] = {0};
+    udp.read(q, sizeof q - 1);
+    if (!strncmp(q, "PLATINUM?", 9)) {
+      String r = String("{\"t\":\"here\",\"name\":\"") + bridgeName + "\",\"fw\":\"" FW_VERSION "\",\"board\":\"" BOARD_ID "\"}";
+      udp.beginPacket(udp.remoteIP(), udp.remotePort());
+      udp.print(r);
+      udp.endPacket();
+    }
+  }
+
+  BusEvent e;
+  while (xQueueReceive(busEvents, &e, 0)) {
+    out(String("{\"t\":\"adb\",\"ev\":\"") + e.ev + "\",\"addr\":" + e.addr + ",\"reg\":" + e.reg + "}");
+  }
+  if (mode == "adb") {
+    adb::Stats s = adb::stats();
+    if (s.talks != lastTalks && millis() - lastTalkReport > 2000) {
+      lastTalks = s.talks;
+      lastTalkReport = millis();
+      out(String("{\"t\":\"adb\",\"ev\":\"talk\",\"addr\":") + s.kbdAddr + ",\"reg\":0}");
+    }
+  }
+
+  if (pswUntil && millis() > pswUntil) { digitalWrite(PIN_ADB_PSW, LOW); pswUntil = 0; }
+  blehid::maintain();
+  if (blehid::listChanged()) sendBleList();
+
+  if (millis() - lastInfo > 2000) {
+    lastInfo = millis();
+    sendInfo();
+    setLed(0, macPolling() ? 32 : 0, macPolling() ? 0 : 24);
+  }
+  delay(1);
+}

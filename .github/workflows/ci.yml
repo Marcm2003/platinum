@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install machfs
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Hardware docs are up to date
+        run: |
+          npm run docs:hardware
+          git diff --exit-code docs/hardware.md || (echo "::error::docs/hardware.md is stale. Run 'npm run docs:hardware' and commit it." && exit 1)
