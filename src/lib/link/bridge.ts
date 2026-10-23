@@ -18,6 +18,8 @@ export interface BridgeInfo {
   baud?: number;
   adbAddr?: { kbd: number; mouse: number };
   macPolling?: boolean;
+  /** A status screen is connected. */
+  display?: boolean;
 }
 
 export interface BleDevice { addr: string; name: string; rssi: number; kind: "keyboard" | "mouse" | "hid" | "unknown"; paired: boolean; connected: boolean }

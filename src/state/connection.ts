@@ -2,6 +2,7 @@
 // and keep probing for the Mac-side agent.
 
 import { Bridge } from "@/lib/link/bridge";
+import { BOARDS } from "@/lib/hardware/boards";
 import { openBle, openSerial, openWebSocket, type TransportKind } from "@/lib/link/transport";
 import { useApp } from "./store";
 import { t } from "@/i18n";
@@ -24,7 +25,11 @@ export async function connect(kind: TransportKind, host?: string) {
     bridge.onEvent = (e) => {
       const s = useApp.getState();
       switch (e.t) {
-        case "info": s.set({ info: e.info }); break;
+        case "info":
+          s.set({ info: e.info });
+          // The firmware knows which board it was built for; follow it in the wiring guide.
+          if (e.info.board !== s.settings.boardId && BOARDS.some((b) => b.id === e.info.board)) s.patchSettings({ boardId: e.info.board });
+          break;
         case "log": s.log(e.m); break;
         case "ble": s.set({ bleDevices: e.list }); break;
         case "adb": s.set({ adbEvents: [...s.adbEvents.slice(-199), e] }); break;

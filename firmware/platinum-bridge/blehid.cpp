@@ -218,3 +218,16 @@ bool listChanged() {
 }
 
 }  // namespace blehid
+
+namespace blehid {
+
+int connectedNames(String* out, int max) {
+  int n = 0;
+  for (auto& kv : devices) {
+    if (!kv.second.connected || n >= max) continue;
+    out[n++] = kv.second.name.length() ? kv.second.name : kv.second.addr;
+  }
+  return n;
+}
+
+}  // namespace blehid

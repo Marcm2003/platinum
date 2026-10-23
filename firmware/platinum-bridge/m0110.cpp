@@ -125,7 +125,7 @@ void begin() {
   }
   esp_timer_start_periodic(quadTimer, 200);
   running = true;
-  if (!task) xTaskCreatePinnedToCore(kbdTask, "m0110", 4096, nullptr, configMAX_PRIORITIES - 2, &task, 1);
+  if (!task) xTaskCreatePinnedToCore(kbdTask, "m0110", 4096, nullptr, configMAX_PRIORITIES - 2, &task, BUS_CORE);
 }
 
 void end() {

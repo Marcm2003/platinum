@@ -7,8 +7,10 @@
 //   Data       start bit '1', 2–8 bytes, stop bit '0'
 //   SRQ        device stretches the command stop bit low to ~300 µs
 //
-// A falling-edge interrupt wakes a high-priority task pinned to core 1; the task
-// then polls the line with µs timing. WiFi/BT run on core 0.
+// A falling-edge interrupt wakes a top-priority task that then polls the line with µs timing.
+// On dual-core chips that task owns core 1 and WiFi/BT run on core 0. On single-core chips
+// (ESP32-C3) radio interrupts could shift bit edges past the ±15 µs margin, so the command byte
+// and our replies are read and sent with interrupts off (about 1.2 ms and 2.6 ms).
 
 #include "adb.h"
 #include "config.h"
@@ -178,27 +180,36 @@ static void transaction() {
   if (lowFor >= 2800) { resetDevices(); if (onEvent) onEvent("reset", 0, 0); return; }
   if (lowFor < 500) return;  // not an attention signal (probably someone else's data)
 
+#if CONFIG_FREERTOS_UNICORE
+  portENTER_CRITICAL(&mux);
+#endif
   // Command byte
   uint8_t cmd = 0;
-  for (int b = 0; b < 8; b++) {
+  bool ok = true;
+  for (int b = 0; b < 8 && ok; b++) {
     int bit = readBit(200);
-    if (bit < 0) return;
-    cmd = (cmd << 1) | bit;
+    if (bit < 0) ok = false;
+    else cmd = (cmd << 1) | bit;
   }
   // Stop bit — stretch it for a service request if we have data and aren't being asked.
-  int64_t stopFall = waitLevel(false, 200);
-  if (stopFall < 0) return;
+  int64_t stopFall = ok ? waitLevel(false, 200) : -1;
   uint8_t addr = cmd >> 4, type = (cmd >> 2) & 3, reg = cmd & 3;
   bool forKbd = addr == kbdAddr, forMouse = addr == mouseAddr;
-  bool wantSrq = (kbdSrq && kbdHasData() && !(forKbd && type == 3 && reg == 0)) ||
-                 (mouseSrq && mouseHasData() && !(forMouse && type == 3 && reg == 0));
-  if (wantSrq) {
-    waitUntil(stopFall + 60);
-    low();
-    waitUntil(stopFall + 300);
-    release();
+  if (stopFall >= 0) {
+    bool wantSrq = (kbdSrq && kbdHasData() && !(forKbd && type == 3 && reg == 0)) ||
+                   (mouseSrq && mouseHasData() && !(forMouse && type == 3 && reg == 0));
+    if (wantSrq) {
+      waitUntil(stopFall + 60);
+      low();
+      waitUntil(stopFall + 300);
+      release();
+    }
+    ok = waitLevel(true, 400) >= 0;
   }
-  if (waitLevel(true, 400) < 0) return;
+#if CONFIG_FREERTOS_UNICORE
+  portEXIT_CRITICAL(&mux);
+#endif
+  if (stopFall < 0 || !ok) return;
   int64_t stopEnd = now();
 
   st.lastTalkMs = millis();
@@ -249,7 +260,7 @@ void begin() {
   gpio_isr_handler_add((gpio_num_t)PIN_ADB_DATA, onFall, nullptr);
   resetDevices();
   running = true;
-  if (!task) xTaskCreatePinnedToCore(adbTask, "adb", 4096, nullptr, configMAX_PRIORITIES - 1, &task, 1);
+  if (!task) xTaskCreatePinnedToCore(adbTask, "adb", 4096, nullptr, configMAX_PRIORITIES - 1, &task, BUS_CORE);
 }
 
 void end() {

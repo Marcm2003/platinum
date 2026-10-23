@@ -26,5 +26,7 @@ void maintain();
 /** Snapshot of scanned + bonded devices, as JSON array text. */
 String listJson();
 bool listChanged();
+/** Names of connected keyboards/mice (up to max); returns how many. */
+int connectedNames(String* out, int max);
 
 }  // namespace blehid

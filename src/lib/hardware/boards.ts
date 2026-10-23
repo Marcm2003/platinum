@@ -12,22 +12,32 @@ export type Role =
   | "I2S_BCK" | "I2S_WS" | "I2S_DIN";
 
 export interface Board {
-  id: "esp32s3" | "esp32";
+  id: "esp32s3" | "esp32" | "esp32c3-oled" | "esp32c3";
   name: string;
+  /** Short chip name for diagrams, and the module/chip label printed on the board drawing. */
+  shortChip: string;
+  module: string;
   chip: string;
   bluetooth: string;
   notes: string;
   /** Header pins top→bottom, USB connector at the bottom. */
   left: string[];
   right: string[];
+  /** GPIO per role; -1 when the board doesn't have it. ESP32-C3 boards share ADB and M0110 pins. */
   roles: Record<Role, number>;
   fqbn: string;
+  /** Firmware profile define, for boards that share a chip (see firmware config.h). */
+  define?: string;
+  /** Status screen: built in, or an optional external 0.96" OLED on these I2C pins. */
+  display: { kind: "builtin-72x40" | "optional-128x64"; sda: number; scl: number };
 }
 
 export const BOARDS: Board[] = [
   {
     id: "esp32s3",
     name: "ESP32-S3-DevKitC-1",
+    shortChip: "ESP32-S3",
+    module: "ESP32-S3-WROOM-1",
     chip: "ESP32-S3 (Xtensa LX7 dual-core, 240 MHz)",
     bluetooth: N_("Bluetooth LE 5 (BLE keyboards and mice)"),
     notes: N_("Recommended: native USB, more RAM and the LCD_CAM peripheral for future video capture."),
@@ -41,11 +51,14 @@ export const BOARDS: Board[] = [
       LED: 48,
       I2S_BCK: 39, I2S_WS: 40, I2S_DIN: 41,
     },
-    fqbn: "esp32:esp32:esp32s3:CDCOnBoot=cdc",
+    fqbn: "esp32:esp32:esp32s3:CDCOnBoot=cdc,PartitionScheme=min_spiffs",
+    display: { kind: "optional-128x64", sda: 8, scl: 9 },
   },
   {
     id: "esp32",
     name: "ESP32-DevKitC (WROOM-32)",
+    shortChip: "ESP32",
+    module: "ESP32-WROOM-32",
     chip: "ESP32 (Xtensa LX6 dual-core, 240 MHz)",
     bluetooth: N_("Bluetooth Classic + LE 4.2"),
     notes: N_("The most common and cheapest. GPIO 34–39 are input-only."),
@@ -59,8 +72,57 @@ export const BOARDS: Board[] = [
       LED: 2,
       I2S_BCK: 14, I2S_WS: 4, I2S_DIN: 35,
     },
-    fqbn: "esp32:esp32:esp32",
+    fqbn: "esp32:esp32:esp32:PartitionScheme=min_spiffs",
+    display: { kind: "optional-128x64", sda: 18, scl: 19 },
+  },
+  {
+    id: "esp32c3-oled",
+    name: "ESP32-C3 with 0.42\" OLED",
+    shortChip: "ESP32-C3",
+    module: "ESP32-C3 + OLED",
+    chip: "ESP32-C3 (RISC-V single-core, 160 MHz)",
+    bluetooth: N_("Bluetooth LE 5 (BLE keyboards and mice)"),
+    notes: N_("Tiny and cheap, with a built-in status screen. Single core, so ADB timing is tighter: prefer the S3 if you have one. ADB and M0110 share pins."),
+    // Pin rows vary between sellers: check the silkscreen. USB at the bottom.
+    left: ["21", "20", "10", "9", "8", "7", "6", "5"],
+    right: ["0", "1", "2", "3", "4", "3V3", "GND", "5V"],
+    roles: {
+      ADB_DATA: 3, ADB_PSW: 4,
+      SER_TX: 0, SER_RX: 1,
+      KBD_CLK: 3, KBD_DATA: 4,
+      MOUSE_X1: 20, MOUSE_X2: 21, MOUSE_Y1: 7, MOUSE_Y2: 10, MOUSE_SW: 2,
+      LED: 8,
+      I2S_BCK: -1, I2S_WS: -1, I2S_DIN: -1,
+    },
+    fqbn: "esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=min_spiffs",
+    define: "PLATINUM_BOARD_ESP32C3_OLED",
+    display: { kind: "builtin-72x40", sda: 5, scl: 6 },
+  },
+  {
+    id: "esp32c3",
+    name: "ESP32-C3 SuperMini",
+    shortChip: "ESP32-C3",
+    module: "ESP32-C3",
+    chip: "ESP32-C3 (RISC-V single-core, 160 MHz)",
+    bluetooth: N_("Bluetooth LE 5 (BLE keyboards and mice)"),
+    notes: N_("The smallest option. Single core, so ADB timing is tighter: prefer the S3 if you have one. ADB and M0110 share pins."),
+    left: ["21", "20", "10", "9", "8", "7", "6", "5"],
+    right: ["0", "1", "2", "3", "4", "3V3", "GND", "5V"],
+    roles: {
+      ADB_DATA: 3, ADB_PSW: 4,
+      SER_TX: 0, SER_RX: 1,
+      KBD_CLK: 3, KBD_DATA: 4,
+      MOUSE_X1: 20, MOUSE_X2: 21, MOUSE_Y1: 7, MOUSE_Y2: 10, MOUSE_SW: 2,
+      LED: 8,
+      I2S_BCK: -1, I2S_WS: -1, I2S_DIN: -1,
+    },
+    fqbn: "esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=min_spiffs",
+    define: "PLATINUM_BOARD_ESP32C3_SUPERMINI",
+    display: { kind: "optional-128x64", sda: 5, scl: 6 },
   },
 ];
+
+/** arduino-cli flags that select a board's firmware profile. */
+export const boardBuildFlags = (b: Board) => (b.define ? ` --build-property "compiler.cpp.extra_flags=-D${b.define}"` : "");
 
 export const boardById = (id: string) => BOARDS.find((b) => b.id === id) ?? BOARDS[0];

@@ -20,6 +20,7 @@
 #include "adb.h"
 #include "blehid.h"
 #include "config.h"
+#include "display.h"
 #include "m0110.h"
 
 static Preferences prefs;
@@ -32,6 +33,9 @@ static String mode = "adb";  // "adb" | "m0110"
 static uint32_t macBaud = MAC_DEFAULT_BAUD;
 static bool apMode = false;
 static uint32_t pswUntil = 0;
+static uint32_t serIn = 0, serOut = 0, keysSent = 0, lastUsbMs = 0;
+static uint32_t lastKeyMs = 0, lastMouseMs = 0, lastSerialMs = 0;  // for the screen's activity icons
+static bool wifiConfigured = false;
 
 // ───────── Output to every connected client ─────────
 
@@ -40,7 +44,7 @@ static volatile bool bleClient = false;
 
 static void out(const String& line) {
   Serial.println(line);
-  if (ws.connectedClients()) ws.broadcastTXT(line);
+  if (ws.connectedClients()) ws.broadcastTXT(line.c_str(), line.length());
   if (bleClient && nusTx) {
     String l = line + "\n";
     const size_t chunk = 180;
@@ -68,9 +72,11 @@ static void logf(const char* fmt, ...) {
 // ───────── Input routing ─────────
 
 static void sendKey(uint8_t code, bool down) {
+  if (down) { keysSent++; lastKeyMs = millis(); }
   if (mode == "adb") adb::key(code, down); else m0110::key(code, down);
 }
 static void sendMouse(int dx, int dy, bool b) {
+  lastMouseMs = millis();
   if (mode == "adb") adb::mouse(dx, dy, b); else m0110::mouse(dx, dy, b);
 }
 
@@ -92,6 +98,7 @@ static void sendInfo() {
   d["heap"] = ESP.getFreeHeap();
   d["uptime"] = millis() / 1000;
   d["macPolling"] = macPolling();
+  d["display"] = display::present();
   if (WiFi.status() == WL_CONNECTED) {
     d["ip"] = WiFi.localIP().toString();
     d["ssid"] = WiFi.SSID();
@@ -147,6 +154,8 @@ static void flushSerial() {
 static void pumpMacSerial() {
   while (macSerial.available()) {
     serBuf[serLen++] = macSerial.read();
+    serIn++;
+    lastSerialMs = millis();
     serLast = micros();
     if (serLen == sizeof serBuf) flushSerial();
   }
@@ -159,7 +168,7 @@ static void applyMode(const String& m) {
   if (m == mode) return;
   if (mode == "adb") adb::end(); else m0110::end();
   mode = m;
-  if (mode == "adb") adb::begin(); else m0110::begin();
+  if (mode == "adb") { pinMode(PIN_ADB_PSW, OUTPUT); digitalWrite(PIN_ADB_PSW, LOW); adb::begin(); } else m0110::begin();
   prefs.putString("mode", mode);
   logf("Mode %s", mode.c_str());
 }
@@ -175,10 +184,13 @@ static void handleLine(const char* line, size_t len) {
     const char* s = d["d"] | "";
     unsigned char bin[768];
     size_t olen = 0;
-    if (!mbedtls_base64_decode(bin, sizeof bin, &olen, (const unsigned char*)s, strlen(s))) macSerial.write(bin, olen);
+    if (!mbedtls_base64_decode(bin, sizeof bin, &olen, (const unsigned char*)s, strlen(s))) { macSerial.write(bin, olen); serOut += olen; lastSerialMs = millis(); }
   }
-  else if (!strcmp(t, "hello")) { sendInfo(); sendBleList(); }
-  else if (!strcmp(t, "power")) { digitalWrite(PIN_ADB_PSW, HIGH); pswUntil = millis() + 400; logf("Power-on"); }
+  else if (!strcmp(t, "hello")) { sendInfo(); sendBleList(); display::toast("Platinum connected"); }
+  else if (!strcmp(t, "power")) {
+    // On the ESP32-C3 the PSW pin doubles as the M0110 keyboard's DATA line.
+    if (mode == "adb") { digitalWrite(PIN_ADB_PSW, HIGH); pswUntil = millis() + 400; logf("Power-on"); display::toast("Power on"); }
+  }
   else if (!strcmp(t, "cfg")) {
     if (d["mode"].is<const char*>()) applyMode(d["mode"].as<String>());
     if (d["baud"].is<uint32_t>()) { macBaud = d["baud"]; macSerial.updateBaudRate(macBaud); prefs.putUInt("baud", macBaud); }
@@ -190,11 +202,18 @@ static void handleLine(const char* line, size_t len) {
     prefs.putString("ssid", d["ssid"] | "");
     prefs.putString("pass", d["pass"] | "");
     logf("WiFi saved, restarting…");
+    display::toast("WiFi saved, restarting");
     delay(300);
     ESP.restart();
   }
   else if (!strcmp(t, "ble_scan")) { blehid::scan(8000); logf("Scanning for BLE devices…"); }
-  else if (!strcmp(t, "ble_pair")) { String a = d["addr"] | ""; logf(blehid::pair(a) ? "Paired %s" : "Could not pair %s", a.c_str()); sendBleList(); }
+  else if (!strcmp(t, "ble_pair")) {
+    String a = d["addr"] | "";
+    bool ok = blehid::pair(a);
+    logf(ok ? "Paired %s" : "Could not pair %s", a.c_str());
+    if (ok) display::toast("Paired"); else display::error(display::ERR_BLE_PAIR, "Pair failed", 5000);
+    sendBleList();
+  }
   else if (!strcmp(t, "ble_forget")) { blehid::forget(d["addr"] | ""); sendBleList(); }
   else if (!strcmp(t, "reboot")) { delay(100); ESP.restart(); }
 }
@@ -269,10 +288,15 @@ static void setupBle() {
 static void setupWifi() {
   String ssid = prefs.getString("ssid", ""), pass = prefs.getString("pass", "");
   WiFi.setHostname(MDNS_NAME);
+  wifiConfigured = ssid.length() > 0;
   if (ssid.length()) {
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid.c_str(), pass.c_str());
-    for (int i = 0; i < 120 && WiFi.status() != WL_CONNECTED; i++) delay(100);
+    for (int i = 0; i < 120 && WiFi.status() != WL_CONNECTED; i++) {
+      delay(100);
+      display::bootProgress(0.3f + 0.65f * i / 120);
+    }
+    if (WiFi.status() != WL_CONNECTED) display::error(display::ERR_WIFI_JOIN, "No WiFi", 8000);
   }
   if (WiFi.status() != WL_CONNECTED) {
     uint8_t mac[6];
@@ -293,8 +317,51 @@ static void setLed(uint8_t r, uint8_t g, uint8_t b) {
 #if LED_IS_RGB
   rgbLedWrite(PIN_LED, r, g, b);
 #else
-  digitalWrite(PIN_LED, (r | g | b) ? HIGH : LOW);
+  bool on = r | g | b;
+  digitalWrite(PIN_LED, on != LED_ACTIVE_LOW ? HIGH : LOW);
 #endif
+}
+
+// ───────── Screen ─────────
+
+static const char* appLink() {
+  if (bleClient) return "BLE";
+  if (ws.connectedClients()) return "WiFi";
+  if (lastUsbMs && millis() - lastUsbMs < 6000) return "USB";
+  return nullptr;
+}
+
+static void updateDisplay() {
+  if (!display::present()) return;
+  display::Status s;
+  s.mode = mode.c_str();
+  s.macActive = macPolling();
+  s.link = appLink();
+  s.wifi = WiFi.status() == WL_CONNECTED;
+  s.ap = apMode;
+  s.ip = s.wifi ? WiFi.localIP().toString() : apMode ? WiFi.softAPIP().toString() : String();
+  s.ssid = s.wifi ? WiFi.SSID() : apMode ? WiFi.softAPSSID() : String();
+  s.bleConnected = blehid::connectedNames(s.bleNames, 4);
+  s.serIn = serIn;
+  s.serOut = serOut;
+  s.keys = keysSent;
+  s.joining = !s.wifi && !apMode && wifiConfigured;
+  s.lastKeyMs = lastKeyMs;
+  s.lastMouseMs = lastMouseMs;
+  s.lastSerialMs = lastSerialMs;
+  display::update(s);
+}
+
+/** BOOT button: short press shows the next page. */
+static void pollButton() {
+  static bool was = false;
+  static uint32_t since = 0;
+  bool down = digitalRead(PIN_BUTTON) == LOW;
+  if (down != was && millis() - since > 30) {
+    since = millis();
+    was = down;
+    if (down) display::nextPage();
+  }
 }
 
 void setup() {
@@ -303,6 +370,8 @@ void setup() {
   pinMode(PIN_LED, OUTPUT);
 #endif
   setLed(0, 0, 24);
+  pinMode(PIN_BUTTON, INPUT_PULLUP);
+  display::begin();
   pinMode(PIN_ADB_PSW, OUTPUT);
   digitalWrite(PIN_ADB_PSW, LOW);
 
@@ -319,8 +388,11 @@ void setup() {
   adb::onEvent = onAdbEvent;
   if (mode == "adb") adb::begin(); else m0110::begin();
 
+  display::bootProgress(0.1f);
   setupBle();
+  display::bootProgress(0.3f);
   setupWifi();
+  display::bootDone();
   logf("%s v%s ready (%s, %s)", FW_NAME, FW_VERSION, BOARD_ID, mode.c_str());
   sendInfo();
 }
@@ -330,6 +402,7 @@ void setup() {
 void loop() {
   static uint32_t lastInfo = 0, lastTalkReport = 0, lastTalks = 0;
 
+  if (Serial.available()) lastUsbMs = millis();
   while (Serial.available()) {
     uint8_t b[64];
     size_t n = Serial.readBytes(b, min((int)sizeof b, Serial.available()));
@@ -370,6 +443,9 @@ void loop() {
   if (pswUntil && millis() > pswUntil) { digitalWrite(PIN_ADB_PSW, LOW); pswUntil = 0; }
   blehid::maintain();
   if (blehid::listChanged()) sendBleList();
+
+  pollButton();
+  updateDisplay();
 
   if (millis() - lastInfo > 2000) {
     lastInfo = millis();
