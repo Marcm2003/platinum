@@ -20,6 +20,8 @@
 
 Platinum is a desktop app for people who love the Macs of 1984–2001. One window gives you an emulator for every System release, a disk tool that speaks HFS, and everything you need to build a small ESP32 bridge for your real Mac: an interactive schematic, a solder guide, ready-made firmware and a status screen with a little Mac that tells you how things are.
 
+> **Why "Platinum"?** It's the name of the classic Mac's look: Platinum was Apple's light grey for the cases of the SE, Mac II and Classic, and later the official name of the grey, bevelled appearance of Mac OS 8 and 9. It covers the whole era this app is about.
+
 <table>
   <tr>
     <td width="33%" valign="top"><b>🖥 Emulate</b><br>System 1.0 to Mac OS 9.2.2 in the app, or launch Mini vMac, Basilisk II, SheepShaver and QEMU.</td>
