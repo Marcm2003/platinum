@@ -22,7 +22,7 @@ export const T = {
   ERROR: 0xff,
 } as const;
 
-export const MAX_PAYLOAD = 1024;
+export const MAX_PAYLOAD = 8192;
 
 export interface Frame { type: number; seq: number; payload: Uint8Array }
 

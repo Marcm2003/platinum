@@ -46,7 +46,7 @@ Every message is one JSON object with a `t` (type) field, terminated by `\n`.
 
 | `t` | Fields | Meaning |
 | --- | --- | --- |
-| `info` | `fw`, `board`, `name`, `mode`, `baud`, `heap`, `uptime`, `macPolling`, `ip`, `ssid`, `rssi`, `adbAddr {kbd, mouse}` | Status, sent every 2 s and after `hello`/`cfg`. |
+| `info` | `fw`, `board` (`esp32s3`, `esp32`, `esp32c3-oled`, `esp32c3`), `name`, `mode`, `baud`, `heap`, `uptime`, `macPolling`, `display`, `ip`, `ssid`, `rssi`, `adbAddr {kbd, mouse}` | Status, sent every 2 s and after `hello`/`cfg`. |
 | `log` | `m` | Human-readable log line. |
 | `ble` | `list: [{addr, name, rssi, kind, paired, connected}]` | Known/nearby BLE HID devices. |
 | `adb` | `ev`, `addr`, `reg` | Bus activity summary (for the bus monitor). |
@@ -55,8 +55,7 @@ Every message is one JSON object with a `t` (type) field, terminated by `\n`.
 
 ## 2. Agent protocol (binary frames)
 
-> [!NOTE]
-> The Mac-side agent (`mac-agent/`) isn't published yet. This section is the specification it implements, and the app side (`src/lib/link/agent.ts`) already follows it.
+Reference implementations: `mac-agent/src/` (the Mac side, C for Retro68) and `src/lib/link/agent.ts` (the app). `npm test` cross-checks their framing, CRC and PackBits code against each other.
 
 The Mac's serial port runs at 57600 bps, 8N1, by default (it must match the bridge's `baud`).
 
@@ -68,7 +67,7 @@ A5 5A | type | seq | len_hi len_lo | payload (len bytes) | crc_hi crc_lo
 
 - All multi-byte integers are big-endian (the 68k's native order).
 - `seq` is chosen by the requester (1–255) and echoed in the reply.
-- `len` ≤ 1024.
+- `len` ≤ 8192 (a full screen row at 32 bpp must fit in one frame).
 - CRC-16/XMODEM (poly 0x1021, init 0) over `type`, `seq`, `len` and `payload`.
 - Receivers resynchronise on `A5 5A` and drop frames with a bad CRC.
 - A **reply** has the request's type with bit 7 set (`type | 0x80`). An error reply has type `0xFF`: payload `[code: i8][message: MacRoman]`.
@@ -87,7 +86,7 @@ A5 5A | type | seq | len_hi len_lo | payload (len bytes) | crc_hi crc_lo
 | `0x31` | SCREEN_DELTA | — | screen stream with changed rows only, then reply |
 | `0x40` | PEEK | `addr u32`, `len u16` (≤ 512) | the bytes |
 | `0x41` | POKE | `addr u32`, bytes | — |
-| `0x50` | LAUNCH | `name` (Pascal), an app in “Platinum Inbox” | — |
+| `0x50` | LAUNCH | `name` (Pascal), an app in “Platinum Inbox” | — (System 7 or later) |
 | `0x51` | LIST | — | repeated: `type[4]`, `creator[4]`, `size u32`, `name` (Pascal) |
 
 The app retries `FILE_DATA` up to 3 times, so the agent must accept a repeated chunk (same fork and offset).
@@ -107,4 +106,7 @@ Pixels are in QuickDraw's layout: 1/2/4/8 bpp indexed (MSB first, 1 = black when
 
 ### Logging from your own programs
 
-Programs built with Retro68 can log through the agent with `PDLog()`/`PDWarn()`/`PDHex()`. These calls send `LOG` frames. If the agent isn't running, the program opens the Modem port itself.
+Programs built with Retro68 can log with `PDLog()`, `PDWarn()`, `PDError()`, `PDTrace()` and `PDHex()` from `mac-agent/pdebug/`.
+
+- **Agent running:** the agent registers Gestalt selector `'PDbg'`. Its value is the address of a ring buffer in the system heap (`pdebug_queue.h`: magic `'PDBQ'`, an `alive` flag, head/tail and 8 KB of data). `pdebug` appends records of the form `[len u16][LOG payload]`, and the agent forwards each one unchanged as a `LOG` frame. The buffer outlives the agent, because Gestalt selectors can't be removed, so on quit the agent only clears `alive`.
+- **No agent:** `pdebug` opens the Modem port itself at 57600 bps and writes `LOG` frames directly.

@@ -241,8 +241,11 @@ function BuildTab() {
 function AgentTab() {
   const { toast, set: setApp, go } = useApp();
   const [agentDir, setAgentDir] = useState("");
-  useEffect(() => { window.platinum.appInfo().then((i) => setAgentDir(i.agentDir)); }, []);
+  const [ready, setReady] = useState(false);
   const built = joinPath(agentDir, "build", "PlatinumAgent.bin");
+  useEffect(() => { window.platinum.appInfo().then((i) => setAgentDir(i.agentDir)); }, []);
+  // Release builds ship a prebuilt agent; a source checkout needs it built first.
+  useEffect(() => { if (agentDir) window.platinum.exists(built).then(setReady); }, [agentDir]);
 
   const makeFloppy = async () => {
     try {
@@ -251,7 +254,7 @@ function AgentTab() {
       addNode(img.volume.root, decodeMacBinary(blob.data));
       const path = await window.platinum.saveFile("Platinum Agent.image", saveImage(img));
       if (path) toast(t("Floppy created. Write it with FloppyEmu or Greaseweazle, or copy it to the BlueSCSI SD card."), "ok");
-    } catch { toast(t("There is no built PlatinumAgent.bin yet. Follow the steps on the left."), "err"); }
+    } catch { toast(t("There is no built PlatinumAgent.bin yet. Follow step 1."), "err"); }
   };
   const tryEmu = async () => {
     try {
@@ -268,7 +271,11 @@ function AgentTab() {
       <div className="card">
         <div className="card-head"><h3>{t("Installing Platinum Agent on the Mac")}</h3></div>
         <div className="steps">
-          <div className="step"><div className="step-num">1</div><div className="grow"><div className="strong">{t("Build the agent with Retro68")}</div><div className="small muted">{t("Works on WSL, Linux or macOS. Produces a 68k app that runs from System 6.0.8 to Mac OS 9.")}</div><CopyBlock text={`cd "${agentDir}"\ncmake -B build -DCMAKE_TOOLCHAIN_FILE=$RETRO68/toolchain/m68k-apple-macos/cmake/retro68.toolchain.cmake\ncmake --build build`} /></div></div>
+          {ready ? (
+            <div className="step done"><div className="step-num"><Icon name="check" size={13} stroke={2.2} /></div><div className="grow"><div className="strong">{t("Platinum Agent is included")}</div><div className="small muted">{t("A 68k app that runs from System 6.0.8 to Mac OS 9.")}</div></div></div>
+          ) : (
+            <div className="step"><div className="step-num">1</div><div className="grow"><div className="strong">{t("Build the agent with Retro68")}</div><div className="small muted">{t("The easiest way is Retro68's Docker image, on any OS. Produces a 68k app that runs from System 6.0.8 to Mac OS 9.")}</div><CopyBlock text={`docker run --rm -v "${agentDir}:/src" -w /src ghcr.io/autc04/retro68 sh -c "cmake -B build -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/m68k-apple-macos/cmake/retro68.toolchain.cmake && cmake --build build"`} /></div></div>
+          )}
           <div className="step"><div className="step-num">2</div><div className="grow"><div className="strong">{t("Put it on a disk")}</div><div className="small muted">{t("Platinum makes a 1.44 MB floppy with the agent on it.")}</div><div className="row" style={{ marginTop: 6 }}><button className="btn sm primary" onClick={makeFloppy}><PixelIcon name="floppy" size={13} /> {t("Make the floppy")}</button><button className="btn sm" onClick={tryEmu}>{t("Try it in the emulator")}</button></div></div></div>
           <div className="step"><div className="step-num">3</div><div className="grow"><div className="strong">{t("Get it onto the Mac")}</div><div className="small muted">{t("FloppyEmu, BlueSCSI/ZuluSCSI, a real floppy written with Greaseweazle, or AppleTalk. You only need to do this once.")}</div></div></div>
           <div className="step"><div className="step-num">4</div><div className="grow"><div className="strong">{t("Open it and connect the Modem port")}</div><div className="small muted">{t("The agent opens the port at 57600 bps and waits. Put it in “Startup Items” so it opens by itself.")}</div></div></div>
