@@ -5,10 +5,12 @@ release/
 *.log
 .DS_Store
 Thumbs.db
+.vscode/
 .env
 .env.*
 mac-agent/build/
 firmware/**/build/
+firmware/dist/
 
 # Never commit Apple ROMs or disk images: they're copyrighted and/or huge.
 *.rom

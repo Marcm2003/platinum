@@ -25,6 +25,12 @@ Platinum is licensed under the GNU General Public License v3.0 or later (see `LI
 | [Infinite Mac](https://infinitemac.org) by Mihai Parparita | Apache-2.0 | The embedded emulator is loaded from infinitemac.org inside the app. Its emulator cores (Mini vMac, Basilisk II, SheepShaver, DingusPPC and others) are under their own licences. |
 | Mini vMac, Basilisk II, SheepShaver, QEMU | GPL-2.0 and others | Native emulators you download and point Platinum at. Not included. |
 
+## Platinum Agent (68k)
+
+| Component | Licence |
+| --- | --- |
+| [Retro68](https://github.com/autc04/Retro68) toolchain and runtime (GCC, newlib, Multiversal interfaces) | GPL-3.0 with the GCC Runtime Library Exception; newlib and Multiversal under their own permissive licences |
+
 ## Firmware libraries (built by you with arduino-cli)
 
 | Component | Licence |
