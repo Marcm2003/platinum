@@ -144,7 +144,9 @@ export function Disks() {
     if (!doc) return;
     try {
       const bytes = saveImage(doc.img);
-      const url = await window.platinum.serveDiskBuffer(doc.img.fileName, doc.img.container.kind === "dc42" ? bytes.subarray(84) : bytes);
+      // DiskCopy images are sent without their 84-byte header, so name them as raw .dsk images.
+      const dc42 = doc.img.container.kind === "dc42";
+      const url = await window.platinum.serveDiskBuffer(dc42 ? `${doc.img.volume.name}.dsk` : doc.img.fileName, dc42 ? bytes.subarray(84) : bytes);
       setApp({ pendingDiskUrl: { name: doc.img.volume.name, url } });
       go("emulator");
     } catch (e) { toast((e as Error).message, "err"); }

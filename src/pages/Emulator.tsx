@@ -30,6 +30,26 @@ export function Emulator({ active }: { active: boolean }) {
 
 const runBus = new EventTarget();
 
+type Disk = { name: string; url: string };
+
+// Infinite Mac fetches disk_url / emulator_load_disk images through its own server, which can't reach
+// this computer's loopback disk server. Dropping the image on the emulated screen loads it locally,
+// the same as dragging a file in by hand.
+const DROP_DISK = `async (url, name) => {
+  const bytes = await (await fetch(url)).arrayBuffer();
+  const dt = new DataTransfer();
+  dt.items.add(new File([bytes], name));
+  const screen = document.querySelector("canvas.Mac-Screen");
+  if (!screen) throw new Error("The emulator screen isn't ready");
+  for (const type of ["dragenter", "dragover", "drop"]) screen.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+}`;
+
+/** The disk server names files "<id>-<name>"; Infinite Mac decides how to mount by extension. */
+const diskFileName = (url: string) => {
+  const name = decodeURIComponent(url.split("/").pop() ?? "disk").replace(/^[^-]*-/, "");
+  return /\.(dsk|img|image|hda|hfs|dc42|iso|toast|cdr)$/i.test(name) ? name : `${name}.dsk`;
+};
+
 function EmbeddedConfig() {
   const { settings, patchSettings } = useApp();
   const emu = settings.emu;
@@ -95,14 +115,17 @@ function EmbeddedStage({ active }: { active: boolean }) {
   const [url, setUrl] = useState<string | null>(null);
   const [state, setState] = useState<RunState>("idle");
   const [error, setError] = useState("");
-  const [disks, setDisks] = useState<{ name: string; url: string }[]>([]);
+  const [disks, setDisks] = useState<Disk[]>([]);
+  const toInsert = useRef<Disk[]>([]);
 
-  const build = (extra = disks) => infiniteMacUrl({
-    ...emu, ramMB: undefined, swapCmdCtrl: settings.swapCmdCtrl,
-    diskUrls: extra.map((d) => d.url), screenUpdates: false,
-  });
+  const build = () => infiniteMacUrl({ ...emu, ramMB: undefined, swapCmdCtrl: settings.swapCmdCtrl, screenUpdates: false });
 
-  const boot = (extra = disks) => { setState("loading"); setError(""); setUrl(build(extra) + `&_=${Date.now()}`); };
+  // Disks go in once the emulator reports it's running.
+  const boot = (extra = disks) => { toInsert.current = extra; setState("loading"); setError(""); setUrl(build() + `&_=${Date.now()}`); };
+
+  const insert = (d: Disk) => ref.current?.executeJavaScript(`(${DROP_DISK})(${JSON.stringify(d.url)}, ${JSON.stringify(diskFileName(d.url))})`)
+    .then(() => toast(t("Disk “{name}” inserted", { name: d.name }), "ok"))
+    .catch((e: Error) => toast(`${d.name}: ${e.message}`, "err"));
 
   useEffect(() => {
     const h = () => boot();
@@ -116,7 +139,7 @@ function EmbeddedStage({ active }: { active: boolean }) {
     setApp({ pendingDiskUrl: null });
     const next = [...disks, pendingDiskUrl];
     setDisks(next);
-    if (state === "running" || state === "paused") { send({ type: "emulator_load_disk", url: pendingDiskUrl.url }); toast(t("Disk “{name}” inserted", { name: pendingDiskUrl.name }), "ok"); }
+    if (state === "running" || state === "paused") insert(pendingDiskUrl);
     else boot(next);
   }, [pendingDiskUrl]);
 
@@ -130,11 +153,16 @@ function EmbeddedStage({ active }: { active: boolean }) {
           console.log("__PLATINUM__" + JSON.stringify({ type: d.type, error: d.error }));
       });`).catch(() => {});
     };
+    // Infinite Mac ignores dropped disks until the guest OS has finished booting, which it logs as
+    // "Emulator quiescent"; fall back to a delay in case that message ever changes.
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    const insertPending = () => { clearTimeout(fallback); toInsert.current.forEach(insert); toInsert.current = []; };
     const onConsole = (e: Event) => {
       const msg = (e as unknown as { message: string }).message;
+      if (msg.startsWith("Emulator quiescent")) { insertPending(); return; }
       if (!msg.startsWith("__PLATINUM__")) return;
       const d = JSON.parse(msg.slice(12));
-      if (d.type === "emulator_loaded") setState("running");
+      if (d.type === "emulator_loaded") { setState("running"); if (toInsert.current.length) fallback = setTimeout(insertPending, 15000); }
       if (d.type === "emulator_exited") setState("exited");
       if (d.type === "emulator_error") { setState("error"); setError(d.error); }
     };
@@ -142,7 +170,7 @@ function EmbeddedStage({ active }: { active: boolean }) {
     wv.addEventListener("dom-ready", onReady);
     wv.addEventListener("console-message", onConsole);
     wv.addEventListener("did-fail-load", onFail);
-    return () => { wv.removeEventListener("dom-ready", onReady); wv.removeEventListener("console-message", onConsole); wv.removeEventListener("did-fail-load", onFail); };
+    return () => { clearTimeout(fallback); wv.removeEventListener("dom-ready", onReady); wv.removeEventListener("console-message", onConsole); wv.removeEventListener("did-fail-load", onFail); };
   }, [url]);
 
   const send = (msg: Record<string, unknown>) => ref.current?.executeJavaScript(`window.postMessage(${JSON.stringify(msg)}, "*")`).catch(() => {});

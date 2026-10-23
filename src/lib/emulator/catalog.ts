@@ -60,7 +60,6 @@ export interface InfiniteOptions {
   savedHd: boolean;
   autoPause: boolean;
   swapCmdCtrl: boolean;
-  diskUrls: string[];
   screenUpdates: boolean;
 }
 
@@ -76,7 +75,6 @@ export function infiniteMacUrl(o: InfiniteOptions): string {
   if (o.scale !== 1) u.searchParams.set("screen_scale", String(o.scale));
   if (o.autoPause) u.searchParams.set("auto_pause", "true");
   if (o.screenUpdates) u.searchParams.set("screen_update_messages", "true");
-  for (const d of o.diskUrls) u.searchParams.append("disk_url", d);
   u.searchParams.set("settings", JSON.stringify({ swapControlAndCommand: o.swapCmdCtrl }));
   return u.toString();
 }
