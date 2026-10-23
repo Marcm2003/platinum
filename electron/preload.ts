@@ -25,6 +25,9 @@ const api: PlatinumAPI = {
   serveDiskBuffer: (name, data) => ipcRenderer.invoke("disk:serveBuffer", name, data),
 
   discoverBridges: () => ipcRenderer.invoke("net:discover"),
+  listSerialPorts: () => ipcRenderer.invoke("serial:list"),
+  findEsptool: () => ipcRenderer.invoke("esp:esptool"),
+  identifyChip: (port) => ipcRenderer.invoke("esp:identify", port),
 
   launchEmulator: (exe, args) => ipcRenderer.invoke("emu:launch", exe, args),
   writeEmulatorPrefs: (name, text) => ipcRenderer.invoke("emu:writePrefs", name, text),

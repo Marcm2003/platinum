@@ -7,12 +7,12 @@ import { writeFileSync } from "node:fs";
 
 const entry = `
 export { buildWiring } from "./src/lib/hardware/wiring";
-export { BOARDS } from "./src/lib/hardware/boards";
+export { BOARDS, boardBuildFlags } from "./src/lib/hardware/boards";
 export { CONNECTORS } from "./src/lib/hardware/connectors";
 export { MAC_MODELS } from "./src/lib/hardware/macModels";
 `;
 await build({ stdin: { contents: entry, resolveDir: ".", loader: "ts" }, bundle: true, platform: "node", format: "esm", outfile: "node_modules/.cache/hardware.mjs", logLevel: "warning" });
-const { buildWiring, BOARDS, CONNECTORS, MAC_MODELS } = await import(new URL("../node_modules/.cache/hardware.mjs", import.meta.url).href);
+const { buildWiring, BOARDS, boardBuildFlags, CONNECTORS, MAC_MODELS } = await import(new URL("../node_modules/.cache/hardware.mjs", import.meta.url).href);
 
 const md = [];
 const table = (head, rows) => {
@@ -52,7 +52,32 @@ md.push(
 table(["Board", "Chip", "Bluetooth", "Notes"], BOARDS.map((b) => [`**${b.name}**`, b.chip, b.bluetooth, b.notes]));
 md.push("### Pin map", "", "The firmware uses these GPIOs (see `firmware/platinum-bridge/config.h`).", "");
 const roles = Object.keys(BOARDS[0].roles).filter((r) => !r.startsWith("I2S"));
-table(["Signal", ...BOARDS.map((b) => b.name)], roles.map((r) => [`\`${r}\``, ...BOARDS.map((b) => `GPIO ${b.roles[r]}`)]));
+table(["Signal", ...BOARDS.map((b) => b.name)], roles.map((r) => [`\`${r}\``, ...BOARDS.map((b) => (b.roles[r] >= 0 ? `GPIO ${b.roles[r]}` : "—"))]));
+md.push(
+  "On ESP32-C3 boards only 13 GPIOs reach the headers, so the ADB pins (Macintosh SE and later) and the M0110 keyboard pins (128K, 512K, Plus) are the same two GPIOs: a Mac only ever uses one of the two buses. The C3 is single-core, which makes ADB timing tighter than on the S3; it's the cheapest option, and best suited to M0110 Macs and the serial link.",
+  "",
+  "### Status screen",
+  "",
+  "The firmware shows the bridge's status on an SSD1306 OLED: whether the Mac is polling, how Platinum is connected, the IP address, paired Bluetooth devices and serial traffic. Press **BOOT** to switch pages.",
+  "",
+);
+table(["Board", "Screen", "I2C pins"], BOARDS.map((b) => [b.name, b.display.kind === "builtin-72x40" ? "Built-in 0.42\" (72×40)" : "Optional 0.96\" (128×64), detected at start-up", `SDA GPIO ${b.display.sda}, SCL GPIO ${b.display.scl}`]));
+md.push(
+  '<p align="center"><img src="images/oled/72x40-tour.gif" width="432" alt="The status screen: start-up, then the little Mac reacting to the bridge"></p>',
+  "",
+  "A little Mac on the home page tells you how things are, in the spirit of the classic start-up icons:",
+  "",
+);
+const shot = (name) => `<img src="images/oled/72x40-${name}.png" width="216" alt="">`;
+table(["Screen", "Meaning"], [
+  [shot("boot_welcome"), "Starting up: Bluetooth, then WiFi. After a crash, the classic system-error box with the bomb comes first (ID = the reset reason: panic, watchdog or power)."],
+  [shot("home_no_mac"), "No Mac has talked to the bridge yet. Check the bus cable and that the Mac is on."],
+  [shot("home_mac_ok"), "The Mac is polling the bridge. Keyboard and mouse icons light up as you type and move."],
+  [shot("home_mac_asleep"), "The Mac was there but has gone quiet: it's off, asleep or unplugged."],
+  [shot("home_error"), "Something failed. The code says what: `00000001` couldn't join WiFi (the bridge falls back to its own access point), `00000002` Bluetooth pairing failed."],
+  [shot("bomb"), "Shown at start-up if the bridge restarted after a crash."],
+]);
+md.push("Regenerate these with `npm run oled-preview`: it renders the firmware's own drawing code on your computer.", "");
 
 md.push("## Wiring by Mac family", "", "Each family below shows the ESP32-S3 wiring with keyboard/mouse and the serial port enabled, powered over USB. For the classic ESP32 swap the GPIO numbers using the pin map above.", "");
 const families = [
@@ -87,13 +112,15 @@ for (const c of Object.values(CONNECTORS)) {
 md.push(
   "## Flashing the firmware",
   "",
-  "The firmware is an Arduino sketch in `firmware/platinum-bridge/`. Platinum's **Hardware & link → Firmware** tab runs these commands for you; by hand they are:",
+  "**The quick way:** every release includes a ready-to-flash image per board, `platinum-bridge-<board>.bin`. Open [ESP Tool](https://espressif.github.io/esptool-js/) in Chrome or Edge, connect the board, and write the file at offset `0x0`. No toolchain needed.",
+  "",
+  "**From source:** the firmware is an Arduino sketch in `firmware/platinum-bridge/`. Platinum's **Hardware & link → Firmware** tab runs these commands for you, and `npm run firmware` builds the images for every board. By hand they are:",
   "",
   "```sh",
   "arduino-cli core install esp32:esp32",
-  'arduino-cli lib install "NimBLE-Arduino" "WebSockets" "ArduinoJson"',
+  'arduino-cli lib install "NimBLE-Arduino" "WebSockets" "ArduinoJson" "U8g2"',
   "",
-  ...BOARDS.map((b) => `# ${b.name}\narduino-cli compile --fqbn ${b.fqbn} firmware/platinum-bridge\narduino-cli upload -p <port> --fqbn ${b.fqbn} firmware/platinum-bridge`),
+  ...BOARDS.map((b) => `# ${b.name}\narduino-cli compile --fqbn ${b.fqbn}${boardBuildFlags(b)} firmware/platinum-bridge\narduino-cli upload -p <port> --fqbn ${b.fqbn} firmware/platinum-bridge`),
   "```",
   "",
   "`<port>` is `COM5` or similar on Windows, `/dev/cu.usbmodem…` on macOS and `/dev/ttyACM0` on Linux. If an ESP32-S3 isn't detected the first time, hold **BOOT**, tap **RST** and release **BOOT**.",

@@ -6,7 +6,7 @@ const common = {
   platform: "node",
   format: "cjs",
   target: "node22",
-  external: ["electron"],
+  external: ["electron", "@serialport/bindings-cpp"],
   sourcemap: watch ? "inline" : false,
   logLevel: "info",
 };

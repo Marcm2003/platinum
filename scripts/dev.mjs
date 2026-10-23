@@ -8,7 +8,7 @@ const server = await createServer({ configFile: "vite.config.ts" });
 await server.listen();
 const url = server.resolvedUrls.local[0];
 
-const opts = { bundle: true, platform: "node", format: "cjs", target: "node22", external: ["electron"], sourcemap: "inline" };
+const opts = { bundle: true, platform: "node", format: "cjs", target: "node22", external: ["electron", "@serialport/bindings-cpp"], sourcemap: "inline" };
 await build({ ...opts, entryPoints: ["electron/main.ts"], outfile: "dist-electron/main.cjs" });
 await build({ ...opts, entryPoints: ["electron/preload.ts"], outfile: "dist-electron/preload.cjs" });
 

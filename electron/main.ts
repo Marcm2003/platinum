@@ -1,11 +1,12 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, session, shell, type WebContents } from "electron";
-import { spawn, type ChildProcess } from "node:child_process";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, session, shell, type WebContents } from "electron";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { autoDetect } from "@serialport/bindings-cpp";
 import { createSocket } from "node:dgram";
 import { createServer, type Server } from "node:http";
 import { promises as fs, createReadStream, statSync } from "node:fs";
-import { networkInterfaces } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import path from "node:path";
-import type { DevicePick, DiscoveredBridge, FileBlob, RunCommandSpec } from "../src/shared/ipc";
+import type { ChipInfo, DevicePick, DiscoveredBridge, FileBlob, RunCommandSpec, SerialPortInfo } from "../src/shared/ipc";
 
 const DEV_URL = process.env.PLATINUM_DEV_URL;
 const isMac = process.platform === "darwin";
@@ -27,8 +28,13 @@ const overlay = (dark: boolean) => ({
   height: 44,
 });
 
+// Packaged builds take their icon from the executable / app bundle; this covers dev runs and Linux windows.
+// Given as a path so Windows can take the small and large sizes straight from the .ico.
+const appIcon = () => path.join(app.getAppPath(), "build", process.platform === "win32" ? "icon.ico" : "icon.png");
+
 function createWindow() {
   win = new BrowserWindow({
+    icon: isMac ? undefined : appIcon(),
     width: 1360,
     height: 880,
     minWidth: 1040,
@@ -243,6 +249,58 @@ function broadcastAddresses(): string[] {
 
 // ───────────────── Native emulators & build commands ─────────────────
 
+// ───────────────── ESP32 boards on USB ─────────────────
+
+ipcMain.handle("serial:list", async (): Promise<SerialPortInfo[]> => {
+  const ports = await autoDetect().list();
+  return ports.map((p: { path: string; vendorId?: string; productId?: string; manufacturer?: string; friendlyName?: string }) => ({
+    path: p.path,
+    vendorId: p.vendorId?.toUpperCase(),
+    productId: p.productId?.toUpperCase(),
+    manufacturer: p.manufacturer,
+    name: p.friendlyName,
+  }));
+});
+
+/** esptool from the Arduino ESP32 core, newest version first. */
+async function findEsptool(): Promise<string | null> {
+  const arduino15 =
+    process.platform === "win32" ? path.join(process.env.LOCALAPPDATA ?? path.join(homedir(), "AppData", "Local"), "Arduino15")
+    : process.platform === "darwin" ? path.join(homedir(), "Library", "Arduino15")
+    : path.join(homedir(), ".arduino15");
+  const base = path.join(arduino15, "packages", "esp32", "tools", "esptool_py");
+  const versions = await fs.readdir(base).catch(() => [] as string[]);
+  versions.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+  for (const v of versions) {
+    for (const name of process.platform === "win32" ? ["esptool.exe"] : ["esptool", "esptool.py"]) {
+      const p = path.join(base, v, name);
+      if (await fs.access(p).then(() => true, () => false)) return p;
+    }
+  }
+  return null;
+}
+
+ipcMain.handle("esp:esptool", () => findEsptool());
+
+/** Reads the chip type and flash size. Read-only, but it resets the board. */
+ipcMain.handle("esp:identify", async (_e, port: string): Promise<ChipInfo> => {
+  const esptool = await findEsptool();
+  if (!esptool) throw new Error("esptool not found: install the ESP32 core with arduino-cli first.");
+  const out = await new Promise<string>((resolve, reject) =>
+    execFile(esptool, ["--port", port, "flash_id"], { timeout: 30000 }, (err, stdout, stderr) => {
+      const text = `${stdout}\n${stderr}`;
+      if (err && !/Chip type|Chip is/.test(text)) reject(new Error(text.trim().split("\n").slice(-3).join(" ") || err.message));
+      else resolve(text);
+    }));
+  const pick = (re: RegExp) => re.exec(out)?.[1]?.trim();
+  return {
+    chip: pick(/Chip type:\s*(.+)/) ?? pick(/Chip is (.+)/) ?? "?",
+    features: pick(/Features:\s*(.+)/),
+    flash: pick(/Detected flash size:\s*(\S+)/),
+    mac: pick(/MAC:\s*([0-9a-f:]{17})/i),
+  };
+});
+
 ipcMain.handle("emu:launch", async (_e, exe: string, args: string[]) => {
   const child = spawn(exe, args, { cwd: path.dirname(exe), detached: true, stdio: "ignore" });
   child.unref();
@@ -287,6 +345,8 @@ ipcMain.on("shell:reveal", (_e, p: string) => shell.showItemInFolder(p));
 // ─────────────────────── Lifecycle ───────────────────────
 
 app.whenReady().then(() => {
+  if (isMac && !app.isPackaged) app.dock?.setIcon(nativeImage.createFromPath(appIcon()));
+  if (process.platform === "win32") app.setAppUserModelId("cat.marc.platinum");  // taskbar grouping and icon
   session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => cb(["serial", "bluetooth", "media", "fullscreen", "pointerLock"].includes(permission)));
   createWindow();
   app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

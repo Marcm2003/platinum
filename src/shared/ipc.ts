@@ -6,6 +6,8 @@ export interface DiscoveredBridge { ip: string; name: string; fw: string; board:
 export interface RunCommandSpec { id: string; command: string; cwd?: string }
 export interface AppInfo { version: string; electron: string; platform: string; userData: string; firmwareDir: string; agentDir: string }
 export interface FileFilter { name: string; extensions: string[] }
+export interface SerialPortInfo { path: string; vendorId?: string; productId?: string; manufacturer?: string; name?: string }
+export interface ChipInfo { chip: string; features?: string; flash?: string; mac?: string }
 
 export interface PlatinumAPI {
   openFiles(opts: { multi?: boolean; disks?: boolean; title?: string }): Promise<FileBlob[]>;
@@ -25,6 +27,9 @@ export interface PlatinumAPI {
   serveDiskBuffer(name: string, data: Uint8Array): Promise<string>;
 
   discoverBridges(): Promise<DiscoveredBridge[]>;
+  listSerialPorts(): Promise<SerialPortInfo[]>;
+  findEsptool(): Promise<string | null>;
+  identifyChip(port: string): Promise<ChipInfo>;
 
   launchEmulator(exe: string, args: string[]): Promise<number>;
   writeEmulatorPrefs(name: string, text: string): Promise<string>;

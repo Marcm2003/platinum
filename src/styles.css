@@ -357,3 +357,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 .blink { animation: blink 1s steps(1) infinite; }
+
+/* Command output / log next to a form: fixed height with its own scroll, kept in view while the page scrolls. */
+.log-panel { display: flex; flex-direction: column; height: calc(100vh - 220px); min-height: 320px; max-height: 760px; position: sticky; top: 0; align-self: start; }
+.log-panel .console { flex: 1; min-height: 0; overflow: auto; }

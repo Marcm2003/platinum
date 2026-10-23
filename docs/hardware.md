@@ -28,25 +28,55 @@ The **Hardware & link** page in Platinum draws this same wiring interactively fo
 | --- | --- | --- | --- |
 | **ESP32-S3-DevKitC-1** | ESP32-S3 (Xtensa LX7 dual-core, 240 MHz) | Bluetooth LE 5 (BLE keyboards and mice) | Recommended: native USB, more RAM and the LCD_CAM peripheral for future video capture. |
 | **ESP32-DevKitC (WROOM-32)** | ESP32 (Xtensa LX6 dual-core, 240 MHz) | Bluetooth Classic + LE 4.2 | The most common and cheapest. GPIO 34–39 are input-only. |
+| **ESP32-C3 with 0.42" OLED** | ESP32-C3 (RISC-V single-core, 160 MHz) | Bluetooth LE 5 (BLE keyboards and mice) | Tiny and cheap, with a built-in status screen. Single core, so ADB timing is tighter: prefer the S3 if you have one. ADB and M0110 share pins. |
+| **ESP32-C3 SuperMini** | ESP32-C3 (RISC-V single-core, 160 MHz) | Bluetooth LE 5 (BLE keyboards and mice) | The smallest option. Single core, so ADB timing is tighter: prefer the S3 if you have one. ADB and M0110 share pins. |
 
 ### Pin map
 
 The firmware uses these GPIOs (see `firmware/platinum-bridge/config.h`).
 
-| Signal | ESP32-S3-DevKitC-1 | ESP32-DevKitC (WROOM-32) |
+| Signal | ESP32-S3-DevKitC-1 | ESP32-DevKitC (WROOM-32) | ESP32-C3 with 0.42" OLED | ESP32-C3 SuperMini |
+| --- | --- | --- | --- | --- |
+| `ADB_DATA` | GPIO 4 | GPIO 25 | GPIO 3 | GPIO 3 |
+| `ADB_PSW` | GPIO 5 | GPIO 26 | GPIO 4 | GPIO 4 |
+| `SER_TX` | GPIO 17 | GPIO 17 | GPIO 0 | GPIO 0 |
+| `SER_RX` | GPIO 18 | GPIO 16 | GPIO 1 | GPIO 1 |
+| `KBD_CLK` | GPIO 10 | GPIO 32 | GPIO 3 | GPIO 3 |
+| `KBD_DATA` | GPIO 11 | GPIO 33 | GPIO 4 | GPIO 4 |
+| `MOUSE_X1` | GPIO 12 | GPIO 21 | GPIO 20 | GPIO 20 |
+| `MOUSE_X2` | GPIO 13 | GPIO 22 | GPIO 21 | GPIO 21 |
+| `MOUSE_Y1` | GPIO 14 | GPIO 23 | GPIO 7 | GPIO 7 |
+| `MOUSE_Y2` | GPIO 15 | GPIO 27 | GPIO 10 | GPIO 10 |
+| `MOUSE_SW` | GPIO 16 | GPIO 13 | GPIO 2 | GPIO 2 |
+| `LED` | GPIO 48 | GPIO 2 | GPIO 8 | GPIO 8 |
+
+On ESP32-C3 boards only 13 GPIOs reach the headers, so the ADB pins (Macintosh SE and later) and the M0110 keyboard pins (128K, 512K, Plus) are the same two GPIOs: a Mac only ever uses one of the two buses. The C3 is single-core, which makes ADB timing tighter than on the S3; it's the cheapest option, and best suited to M0110 Macs and the serial link.
+
+### Status screen
+
+The firmware shows the bridge's status on an SSD1306 OLED: whether the Mac is polling, how Platinum is connected, the IP address, paired Bluetooth devices and serial traffic. Press **BOOT** to switch pages.
+
+| Board | Screen | I2C pins |
 | --- | --- | --- |
-| `ADB_DATA` | GPIO 4 | GPIO 25 |
-| `ADB_PSW` | GPIO 5 | GPIO 26 |
-| `SER_TX` | GPIO 17 | GPIO 17 |
-| `SER_RX` | GPIO 18 | GPIO 16 |
-| `KBD_CLK` | GPIO 10 | GPIO 32 |
-| `KBD_DATA` | GPIO 11 | GPIO 33 |
-| `MOUSE_X1` | GPIO 12 | GPIO 21 |
-| `MOUSE_X2` | GPIO 13 | GPIO 22 |
-| `MOUSE_Y1` | GPIO 14 | GPIO 23 |
-| `MOUSE_Y2` | GPIO 15 | GPIO 27 |
-| `MOUSE_SW` | GPIO 16 | GPIO 13 |
-| `LED` | GPIO 48 | GPIO 2 |
+| ESP32-S3-DevKitC-1 | Optional 0.96" (128×64), detected at start-up | SDA GPIO 8, SCL GPIO 9 |
+| ESP32-DevKitC (WROOM-32) | Optional 0.96" (128×64), detected at start-up | SDA GPIO 18, SCL GPIO 19 |
+| ESP32-C3 with 0.42" OLED | Built-in 0.42" (72×40) | SDA GPIO 5, SCL GPIO 6 |
+| ESP32-C3 SuperMini | Optional 0.96" (128×64), detected at start-up | SDA GPIO 5, SCL GPIO 6 |
+
+<p align="center"><img src="images/oled/72x40-tour.gif" width="432" alt="The status screen: start-up, then the little Mac reacting to the bridge"></p>
+
+A little Mac on the home page tells you how things are, in the spirit of the classic start-up icons:
+
+| Screen | Meaning |
+| --- | --- |
+| <img src="images/oled/72x40-boot_welcome.png" width="216" alt=""> | Starting up: Bluetooth, then WiFi. After a crash, the classic system-error box with the bomb comes first (ID = the reset reason: panic, watchdog or power). |
+| <img src="images/oled/72x40-home_no_mac.png" width="216" alt=""> | No Mac has talked to the bridge yet. Check the bus cable and that the Mac is on. |
+| <img src="images/oled/72x40-home_mac_ok.png" width="216" alt=""> | The Mac is polling the bridge. Keyboard and mouse icons light up as you type and move. |
+| <img src="images/oled/72x40-home_mac_asleep.png" width="216" alt=""> | The Mac was there but has gone quiet: it's off, asleep or unplugged. |
+| <img src="images/oled/72x40-home_error.png" width="216" alt=""> | Something failed. The code says what: `00000001` couldn't join WiFi (the bridge falls back to its own access point), `00000002` Bluetooth pairing failed. |
+| <img src="images/oled/72x40-bomb.png" width="216" alt=""> | Shown at start-up if the bridge restarted after a crash. |
+
+Regenerate these with `npm run oled-preview`: it renders the firmware's own drawing code on your computer.
 
 ## Wiring by Mac family
 
@@ -250,18 +280,26 @@ Quadrature mouse: two phase-shifted signals per axis (X1/X2, Y1/Y2) and an activ
 
 ## Flashing the firmware
 
-The firmware is an Arduino sketch in `firmware/platinum-bridge/`. Platinum's **Hardware & link → Firmware** tab runs these commands for you; by hand they are:
+**The quick way:** every release includes a ready-to-flash image per board, `platinum-bridge-<board>.bin`. Open [ESP Tool](https://espressif.github.io/esptool-js/) in Chrome or Edge, connect the board, and write the file at offset `0x0`. No toolchain needed.
+
+**From source:** the firmware is an Arduino sketch in `firmware/platinum-bridge/`. Platinum's **Hardware & link → Firmware** tab runs these commands for you, and `npm run firmware` builds the images for every board. By hand they are:
 
 ```sh
 arduino-cli core install esp32:esp32
-arduino-cli lib install "NimBLE-Arduino" "WebSockets" "ArduinoJson"
+arduino-cli lib install "NimBLE-Arduino" "WebSockets" "ArduinoJson" "U8g2"
 
 # ESP32-S3-DevKitC-1
-arduino-cli compile --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc firmware/platinum-bridge
-arduino-cli upload -p <port> --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc firmware/platinum-bridge
+arduino-cli compile --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc,PartitionScheme=min_spiffs firmware/platinum-bridge
+arduino-cli upload -p <port> --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc,PartitionScheme=min_spiffs firmware/platinum-bridge
 # ESP32-DevKitC (WROOM-32)
-arduino-cli compile --fqbn esp32:esp32:esp32 firmware/platinum-bridge
-arduino-cli upload -p <port> --fqbn esp32:esp32:esp32 firmware/platinum-bridge
+arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs firmware/platinum-bridge
+arduino-cli upload -p <port> --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs firmware/platinum-bridge
+# ESP32-C3 with 0.42" OLED
+arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=min_spiffs --build-property "compiler.cpp.extra_flags=-DPLATINUM_BOARD_ESP32C3_OLED" firmware/platinum-bridge
+arduino-cli upload -p <port> --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=min_spiffs firmware/platinum-bridge
+# ESP32-C3 SuperMini
+arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=min_spiffs --build-property "compiler.cpp.extra_flags=-DPLATINUM_BOARD_ESP32C3_SUPERMINI" firmware/platinum-bridge
+arduino-cli upload -p <port> --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=min_spiffs firmware/platinum-bridge
 ```
 
 `<port>` is `COM5` or similar on Windows, `/dev/cu.usbmodem…` on macOS and `/dev/ttyACM0` on Linux. If an ESP32-S3 isn't detected the first time, hold **BOOT**, tap **RST** and release **BOOT**.

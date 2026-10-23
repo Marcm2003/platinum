@@ -1,15 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "@/state/store";
-import { BOARDS, type Role } from "@/lib/hardware/boards";
+import { BOARDS, boardBuildFlags, type Role } from "@/lib/hardware/boards";
 import { MAC_MODELS } from "@/lib/hardware/macModels";
 import { CONNECTORS } from "@/lib/hardware/connectors";
 import { buildWiring } from "@/lib/hardware/wiring";
-import { BoardView, ConnectorFace, WiringDiagram } from "@/ui/WiringDiagram";
+import { BoardView, ConnectorFace } from "@/ui/WiringDiagram";
+import { Schematic } from "@/ui/Schematic";
+import { SolderGuide } from "@/ui/SolderGuide";
 import { CopyBlock, Field, PageHead, Seg, SettingRow, Toggle, ConnectSheet } from "@/ui/components";
 import { Icon, PixelIcon } from "@/ui/icons";
 import { useCommand } from "@/ui/useCommand";
 import { N_, t, tx } from "@/i18n";
-import { joinPath } from "@/lib/paths";
+import { examplePath, joinPath } from "@/lib/paths";
+import { bestPort, boardsForChip, describePort } from "@/lib/hardware/usb";
+import type { ChipInfo, SerialPortInfo } from "@/shared/ipc";
+
+/** Keep in sync with FW_VERSION in firmware/platinum-bridge/config.h. */
+const FIRMWARE_VERSION = "0.2.0";
 
 type Tab = "wiring" | "bridge" | "firmware";
 
@@ -39,6 +46,7 @@ const ROLE_LABELS: Partial<Record<Role, string>> = {
 function Wiring() {
   const { settings, patchSettings } = useApp();
   const [hover, setHover] = useState<string | null>(null);
+  const [view, setView] = useState<"schematic" | "solder">("schematic");
   // The plan's text is translated as it is built, so rebuild it when the language changes too.
   const plan = useMemo(() => buildWiring(settings.boardId, settings.modelId, settings.features), [settings.boardId, settings.modelId, settings.features, settings.language]);
   const f = settings.features;
@@ -50,7 +58,10 @@ function Wiring() {
       for (const e of [w.from, w.to]) {
         if (e.part !== "esp" || !e.pin.startsWith("GPIO")) continue;
         const gpio = Number(e.pin.slice(4));
-        const role = (Object.entries(plan.board.roles) as [Role, number][]).find(([, g]) => g === gpio)?.[0];
+        // On boards where ADB and M0110 share pins, name the pin after the bus this Mac uses.
+        const bus = plan.model.input === "adb" ? /^ADB_/ : /^(KBD_|MOUSE_)/;
+        const candidates = (Object.entries(plan.board.roles) as [Role, number][]).filter(([, g]) => g === gpio);
+        const role = (candidates.find(([r]) => bus.test(r)) ?? candidates[0])?.[0];
         if (role) m.set(gpio, { label: t(ROLE_LABELS[role] ?? role), color: w.color });
       }
     }
@@ -84,12 +95,17 @@ function Wiring() {
         </div>
       </div>
 
-      <div className="card">
-        <div className="card-head"><h3>{t("Schematic")}</h3><span className="sub">{t("Hover over a wire or a pin to highlight it")}</span></div>
-        <div style={{ overflowX: "auto", padding: "8px 8px 0" }}>
-          <WiringDiagram plan={plan} hover={hover} setHover={setHover} />
-        </div>
+      <div className="row">
+        <Seg value={view} onChange={setView} options={[{ value: "schematic", label: t("Schematic") }, { value: "solder", label: t("Solder guide") }]} />
+        <span className="small muted">{view === "schematic" ? t("Hover over a wire or a pin to highlight it") : t("Every part as it looks on the bench, with each pad and where it goes")}</span>
       </div>
+      {view === "schematic" ? (
+        <div className="card">
+          <div style={{ overflowX: "auto", padding: 8 }}>
+            <Schematic plan={plan} hover={hover} setHover={setHover} />
+          </div>
+        </div>
+      ) : <SolderGuide plan={plan} />}
 
       <div className="grid" style={{ gridTemplateColumns: "1.3fr 1fr" }}>
         <div className="card">
@@ -112,6 +128,15 @@ function Wiring() {
         <div className="card">
           <div className="card-head"><h3>{t("Where each pin is on the board")}</h3><span className="sub">{plan.board.name}</span></div>
           <div style={{ padding: 12 }}><BoardView board={plan.board} roles={roles} /></div>
+          <div className="list-row small muted" style={{ alignItems: "flex-start" }}>
+            <Icon name="info" size={14} />
+            <div className="grow">
+              {t(plan.board.notes)}{" "}
+              {plan.board.display.kind === "builtin-72x40"
+                ? t("Its built-in screen shows the bridge's status; press BOOT to change page.")
+                : t("Optional: a 0.96\" SSD1306 OLED on GPIO {sda} (SDA) and {scl} (SCL) shows the bridge's status; press BOOT to change page.", { sda: plan.board.display.sda, scl: plan.board.display.scl })}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -162,41 +187,151 @@ function Wiring() {
 // ───────────── Firmware ─────────────
 
 function Firmware() {
-  const { settings } = useApp();
+  const { settings, patchSettings } = useApp();
   const board = BOARDS.find((b) => b.id === settings.boardId)!;
   const [dir, setDir] = useState("");
-  const [port, setPort] = useState(() => ({ win32: "COM5", darwin: "/dev/cu.usbmodem1101" })[window.platinum.platform] ?? "/dev/ttyACM0");
+  const [prebuilt, setPrebuilt] = useState<string | null>(null);
+  const [esptool, setEsptool] = useState<string | null>(null);
+  const [ports, setPorts] = useState<SerialPortInfo[] | null>(null);
+  const [port, setPort] = useState("");
+  const [picked, setPicked] = useState(false);  // the user chose a port; stop auto-selecting
+  const [chip, setChip] = useState<{ port: string; info?: ChipInfo; error?: string; busy?: boolean } | null>(null);
   const cmd = useCommand();
   const consoleRef = useRef<HTMLDivElement>(null);
   useEffect(() => { window.platinum.appInfo().then((i) => setDir(joinPath(i.firmwareDir, "platinum-bridge"))); }, []);
+  useEffect(() => { window.platinum.findEsptool().then(setEsptool); }, []);
+  // Releases ship a ready-to-flash image per board in firmware/dist.
+  useEffect(() => {
+    if (!dir) return;
+    const file = joinPath(dir, "..", "dist", `platinum-bridge-${board.id}.bin`);
+    window.platinum.exists(file).then((ok) => setPrebuilt(ok ? file : null));
+  }, [dir, board.id]);
   useEffect(() => { consoleRef.current?.scrollTo(0, 1e9); }, [cmd.lines]);
 
-  const libs = `arduino-cli core install esp32:esp32\narduino-cli lib install "NimBLE-Arduino" "WebSockets" "ArduinoJson"`;
-  const compile = `arduino-cli compile --fqbn ${board.fqbn} "${dir}"`;
-  const upload = `arduino-cli upload -p ${port} --fqbn ${board.fqbn} "${dir}"`;
+  // Watch for boards being plugged in or out while this tab is open.
+  useEffect(() => {
+    let alive = true;
+    const scan = () => window.platinum.listSerialPorts().then((list) => { if (alive) setPorts(list); }).catch(() => {});
+    scan();
+    const timer = setInterval(scan, 2500);
+    return () => { alive = false; clearInterval(timer); };
+  }, []);
+  useEffect(() => {
+    if (!ports) return;
+    const present = ports.some((p) => p.path === port);
+    if (picked && present) return;
+    const best = bestPort(ports, board);
+    if (best && (!present || !picked)) { setPort(best.path); setPicked(false); }
+  }, [ports, board.id]);
+
+  const identify = async () => {
+    setChip({ port, busy: true });
+    try { setChip({ port, info: await window.platinum.identifyChip(port) }); }
+    catch (e) { setChip({ port, error: (e as Error).message }); }
+  };
+  const matching = chip?.info ? boardsForChip(chip.info.chip) : [];
+  const mismatch = chip?.info && matching.length > 0 && !matching.some((b) => b.id === board.id);
+
+  const q = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
+  const libs = `arduino-cli core install esp32:esp32\narduino-cli lib install "NimBLE-Arduino" "WebSockets" "ArduinoJson" "U8g2"`;
+  const compile = `arduino-cli compile --fqbn ${board.fqbn}${boardBuildFlags(board)} "${dir}"`;
+  const upload = `arduino-cli upload -p ${port || "<port>"} --fqbn ${board.fqbn} "${dir}"`;
+  // Naming the chip makes esptool refuse to write if a different one is plugged in.
+  const chipArg = board.shortChip.toLowerCase().replace("-", "");
+  const flash = esptool && prebuilt && port ? `${q(esptool)} --chip ${chipArg} --port ${port} --baud 921600 write_flash 0x0 ${q(prebuilt)}` : "";
 
   return (
     <div className="grid" style={{ gridTemplateColumns: "1fr 1.1fr" }}>
       <div className="col" style={{ gap: 16 }}>
+        <div className="card">
+          <div className="card-head">
+            <h3>{t("Connected boards")}</h3>
+            <span className="sub">{t("Updates as you plug them in")}</span>
+          </div>
+          {ports === null ? <div className="list-row small muted">{t("Looking for serial ports…")}</div>
+            : ports.length === 0 ? <div className="list-row small muted">{t("Nothing connected. Plug the board in with a USB cable that carries data, not just power.")}</div>
+            : ports.map((p) => {
+              const d = describePort(p);
+              const on = p.path === port;
+              return (
+                <button key={p.path} className={`list-row ${on ? "sel" : ""}`} style={{ width: "100%", border: 0, textAlign: "left", cursor: "default", background: on ? "var(--accent-soft)" : "none", opacity: d.kind === "other" ? 0.6 : 1 }}
+                  onClick={() => { setPort(p.path); setPicked(true); }}>
+                  <span style={{ width: 16, height: 16, borderRadius: 8, flex: "none", boxShadow: `inset 0 0 0 ${on ? 5 : 1.5}px ${on ? "var(--accent)" : "var(--line-2)"}` }} />
+                  <PixelIcon name="chip" size={18} />
+                  <div className="grow">
+                    <div className="strong mono">{p.path}</div>
+                    <div className="tiny muted">{d.kind === "other" ? `${t("Not an ESP32")}${d.label ? ` · ${d.label}` : ""}` : `${d.label} · ${d.chips.join(" / ")}`}{p.vendorId ? ` · ${p.vendorId}:${p.productId}` : ""}</div>
+                  </div>
+                  {d.kind !== "other" && <span className="pill ok"><span className="dot" />ESP32</span>}
+                </button>
+              );
+            })}
+          <div className="list-row" style={{ gap: 8 }}>
+            <span className="small muted">{t("Port:")}</span>
+            <input className="input mono" style={{ width: 150 }} value={port} placeholder={examplePath("COM5", "/dev/ttyACM0")} onChange={(e) => { setPort(e.target.value); setPicked(true); }} />
+            <button className="btn sm right" disabled={!port || !esptool || chip?.busy || cmd.running} onClick={identify} title={esptool ? "" : t("Needs the ESP32 core (step 1 below)")}>
+              <Icon name="search" size={13} /> {chip?.busy ? t("Reading…") : t("Identify chip")}
+            </button>
+          </div>
+          {chip && !chip.busy && chip.port === port && (
+            <div className="list-row small" style={{ alignItems: "flex-start" }}>
+              {chip.error ? <><span style={{ color: "var(--err)" }}><Icon name="warn" size={15} /></span><div className="grow">{chip.error}<div className="tiny muted">{t("If the board isn't detected: hold BOOT, press RST and release BOOT.")}</div></div></>
+                : chip.info && (
+                  <>
+                    <span style={{ color: mismatch ? "var(--warn)" : "var(--ok)" }}><Icon name={mismatch ? "warn" : "check"} size={15} /></span>
+                    <div className="grow">
+                      <div className="strong">{chip.info.chip}</div>
+                      <div className="tiny muted">{[chip.info.features, chip.info.flash && `${t("Flash memory")} ${chip.info.flash}`, chip.info.mac && `MAC ${chip.info.mac}`].filter(Boolean).join(" · ")}</div>
+                      {mismatch && (
+                        <div className="row wrap" style={{ marginTop: 8, gap: 6 }}>
+                          <span className="small">{t("That isn't the board selected for this build ({board}).", { board: board.name })}</span>
+                          {matching.map((b) => <button key={b.id} className="btn sm primary" onClick={() => patchSettings({ boardId: b.id })}>{t("Use {board}", { board: b.name })}</button>)}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+            </div>
+          )}
+        </div>
+
+        <div className="card card-pad col" style={{ gap: 10 }}>
+          <div className="row"><PixelIcon name="chip" size={30} /><div><h3>{t("Flash the ready-made firmware")}</h3><div className="small muted">{board.name} · v{FIRMWARE_VERSION}</div></div></div>
+          {esptool && prebuilt ? (
+            <>
+              <div className="small muted">{tx("Writes {file} to the board on {port}. Nothing to compile.", { file: <code>platinum-bridge-{board.id}.bin</code>, port: <code>{port || "—"}</code> })}</div>
+              <div className="row">
+                <button className="btn primary" disabled={!port || cmd.running || !!mismatch} onClick={() => cmd.run(flash)}><Icon name="bolt" size={14} /> {t("Flash")}</button>
+                {cmd.running && <button className="btn danger" onClick={cmd.kill}>{t("Stop")}</button>}
+                <button className="btn sm right" onClick={() => window.platinum.reveal(prebuilt)}><Icon name="open" size={13} /> {t("Show the file")}</button>
+              </div>
+            </>
+          ) : (
+            <div className="small muted">
+              {tx("Open {flasher} in Chrome or Edge, connect the board, and write {file} at offset {offset}.", {
+                flasher: <a onClick={() => window.platinum.openExternal("https://espressif.github.io/esptool-js/")}>ESP Tool</a>,
+                file: <code>platinum-bridge-{board.id}.bin</code>,
+                offset: <code>0x0</code>,
+              })}
+              {!prebuilt && <div className="hint" style={{ marginTop: 6 }}>{t("Download it from the Releases page, or run npm run firmware in a source checkout.")}</div>}
+            </div>
+          )}
+        </div>
+
         <div className="card card-pad col" style={{ gap: 14 }}>
-          <div className="row"><PixelIcon name="chip" size={30} /><div><h3>Platinum Bridge firmware</h3><div className="small muted">Arduino · ESP32 core 3.x · {board.name}</div></div></div>
+          <h3>{t("Or build it from source")}</h3>
           <div className="small muted">{t("The firmware speaks ADB or M0110 to the Mac, takes BLE keyboards and mice, bridges the RS-422 serial port to WiFi, and talks to Platinum over USB, WebSocket or BLE.")}</div>
           <Field label={t("1 · Install the core and libraries (once)")}><CopyBlock text={libs} /></Field>
           <Field label={t("2 · Compile")}><CopyBlock text={compile} /></Field>
-          <Field label={t("3 · Upload to the board")}>
-            <div className="row" style={{ marginBottom: 6 }}><span className="small">{t("Port:")}</span><input className="input mono" style={{ width: 110 }} value={port} onChange={(e) => setPort(e.target.value)} /></div>
-            <CopyBlock text={upload} />
-          </Field>
+          <Field label={t("3 · Upload to the board")}><CopyBlock text={upload} /></Field>
           <div className="row">
             <button className="btn" disabled={cmd.running} onClick={() => cmd.run(libs.replace("\n", " && "))}>{t("Install")}</button>
             <button className="btn" disabled={cmd.running} onClick={() => cmd.run(compile)}><Icon name="hammer" size={14} /> {t("Compile")}</button>
-            <button className="btn primary" disabled={cmd.running} onClick={async () => { if ((await cmd.run(compile)) === 0) await cmd.run(upload); }}><Icon name="bolt" size={14} /> {t("Compile & upload")}</button>
-            {cmd.running && <button className="btn danger" onClick={cmd.kill}>{t("Stop")}</button>}
+            <button className="btn primary" disabled={cmd.running || !port} onClick={async () => { if ((await cmd.run(compile)) === 0) await cmd.run(upload); }}><Icon name="bolt" size={14} /> {t("Compile & upload")}</button>
           </div>
-          <div className="hint">{t("If it's your first time with an ESP32-S3 and it isn't detected: hold BOOT, press RST and release BOOT.")}</div>
         </div>
       </div>
-      <div className="card" style={{ display: "flex", flexDirection: "column", minHeight: 420 }}>
+      <div className="card log-panel">
         <div className="card-head"><h3>{t("Output")}</h3><button className="btn sm right" onClick={cmd.clear}>{t("Clear")}</button></div>
         <div ref={consoleRef} className="console" style={{ flex: 1 }}>
           {cmd.lines.length === 0 && <div className="ln lv0">{t("arduino-cli output will appear here.")}</div>}
@@ -262,7 +397,7 @@ function BridgePanel() {
         </div>
       </div>
 
-      <div className="card" style={{ display: "flex", flexDirection: "column", minHeight: 480 }}>
+      <div className="card log-panel">
         <div className="card-head"><h3>{t("Bridge log")}</h3><span className="sub">{bridge ? `↓ ${bridge.rx} B · ↑ ${bridge.tx} B` : ""}</span><button className="btn sm right" onClick={() => useApp.setState({ bridgeLog: [] })}>{t("Clear")}</button></div>
         <div ref={logRef} className="console" style={{ flex: 1 }}>
           {bridgeLog.length === 0 && <div className="ln lv0">{t("No messages yet.")}</div>}
