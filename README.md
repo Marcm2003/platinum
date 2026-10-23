@@ -142,7 +142,7 @@ Platinum is young (v0.1). Here's where each part stands:
 | Native emulator launcher | ✅ Works (bring your own emulator and ROM) |
 | Disk Studio: HFS read/write, MacBinary, BinHex, DiskCopy 4.2, partitioned images | ✅ Works, cross-tested against [machfs](https://github.com/elliotnunn/machfs). MFS (System 1–2) and HFS+ aren't supported yet. |
 | Schematic, solder guide, board detection and chip identification | ✅ Works |
-| One-click flashing from the app | 🧪 Not yet run on a board |
+| One-click flashing from the app | ✅ Works (flashed an ESP32-C3 from the app) |
 | Bridge firmware: ADB / M0110, BLE HID, serial over USB/WiFi/BLE, OLED screen | 🧪 Builds for all four boards; not yet tested with a real Mac, so reports are very welcome |
 | Mac network (PPP over the serial port, NAT to WiFi) | 🧪 Builds for all four boards; not yet tested with a real Mac |
 | Platinum Agent | 🧪 Runs on System 7.5.3 in the emulator, protocol cross-tested with the app; [the serial link still needs testing on a real Mac](mac-agent/README.md#status) |
