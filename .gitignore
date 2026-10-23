@@ -27,3 +27,4 @@ vMac.ROM
 *.cdr
 *.sit
 *.hqx
+__pycache__/

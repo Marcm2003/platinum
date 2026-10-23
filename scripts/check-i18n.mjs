@@ -1,4 +1,4 @@
-// Checks the Catalan dictionary against every t("…"), tx("…") and N_("…") literal in src/:
+// Checks every dictionary in src/i18n against every t("…"), tx("…") and N_("…") literal in src/:
 // nothing missing, nothing stale, and the same {placeholders} on both sides.
 //   node scripts/check-i18n.mjs          → check (exit 1 on problems)
 //   node scripts/check-i18n.mjs --keys   → print every key as JSON (to help translating)
@@ -30,19 +30,21 @@ if (process.argv.includes("--keys")) {
   process.exit(0);
 }
 
-await build({ entryPoints: ["src/i18n/ca.ts"], bundle: true, platform: "node", format: "esm", outfile: "node_modules/.cache/ca.mjs", logLevel: "warning" });
-const { ca } = await import(new URL("../node_modules/.cache/ca.mjs", import.meta.url).href + `?${Date.now()}`);
-
+const langs = readdirSync("src/i18n").filter((f) => f !== "index.ts" && f.endsWith(".ts")).map((f) => f.slice(0, -3));
 const vars = (s) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
 const problems = [];
-for (const [key, file] of keys) {
-  if (!(key in ca)) problems.push(`missing  ${JSON.stringify(key)}  (${file})`);
-  else if (vars(key) !== vars(ca[key])) problems.push(`placeholders differ  ${JSON.stringify(key)}`);
+for (const lang of langs) {
+  await build({ entryPoints: [`src/i18n/${lang}.ts`], bundle: true, platform: "node", format: "esm", outfile: `node_modules/.cache/i18n-${lang}.mjs`, logLevel: "warning" });
+  const dict = (await import(new URL(`../node_modules/.cache/i18n-${lang}.mjs`, import.meta.url).href + `?${Date.now()}`))[lang];
+  for (const [key, file] of keys) {
+    if (!(key in dict)) problems.push(`${lang}: missing  ${JSON.stringify(key)}  (${file})`);
+    else if (vars(key) !== vars(dict[key])) problems.push(`${lang}: placeholders differ  ${JSON.stringify(key)}`);
+  }
+  for (const key of Object.keys(dict)) if (!keys.has(key)) problems.push(`${lang}: unused   ${JSON.stringify(key)}`);
 }
-for (const key of Object.keys(ca)) if (!keys.has(key)) problems.push(`unused   ${JSON.stringify(key)}`);
 
 if (problems.length) {
-  console.error(`i18n: ${problems.length} problem(s) in src/i18n/ca.ts\n  ${problems.join("\n  ")}`);
+  console.error(`i18n: ${problems.length} problem(s) in src/i18n\n  ${problems.join("\n  ")}`);
   process.exit(1);
 }
-console.log(`  ok  i18n: ${keys.size} strings translated to Catalan`);
+console.log(`  ok  i18n: ${keys.size} strings in ${langs.length} languages (${langs.join(", ")})`);

@@ -11,7 +11,7 @@
   <a href="https://github.com/Marcm2003/platinum/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Marcm2003/platinum/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="Licence: GPL-3.0-or-later" src="https://img.shields.io/badge/licence-GPL--3.0--or--later-blue"></a>
   <img alt="Windows, macOS and Linux" src="https://img.shields.io/badge/platforms-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-lightgrey">
-  <img alt="English and Catalan" src="https://img.shields.io/badge/languages-English%20%C2%B7%20Catal%C3%A0-lightgrey">
+  <img alt="8 languages" src="https://img.shields.io/badge/languages-8-lightgrey">
 </p>
 
 <p align="center">
@@ -68,7 +68,7 @@ Choose your Mac and your ESP32 board and Platinum draws the build:
 
 - **Remote screen** and **debugger** for a real Mac running Platinum Agent: live `PDLog()` console, memory peek/poke, and build → send → run with Retro68.
 - **Keyboard & mouse**: type on the Mac from your computer, or pair Bluetooth keyboards and mice with the bridge.
-- **English and Catalan**, light and dark themes.
+- **In 8 languages**: English, Català, Español, Français, Deutsch, Italiano, Português (Brasil) and 日本語. Light and dark themes.
 
 <p align="center"><img src="docs/images/home-dark.png" width="720" alt="Platinum's home page in dark mode"></p>
 
@@ -176,7 +176,7 @@ Platinum Agent builds with Retro68; Docker is enough, see [mac-agent/README.md](
 | `docs/` | Hardware guide, protocol specification and images. |
 | `scripts/` | Build, test, docs, firmware, icon and preview scripts. |
 
-Strings live in the code in English inside `t("…")`, and `src/i18n/ca.ts` holds the Catalan. `npm test` fails if a translation is missing. To add a language, copy `ca.ts`, translate it and register it in `src/i18n/index.ts`.
+Strings live in the code in English inside `t("…")`, and `src/i18n/<lang>.ts` holds each translation. `npm test` fails if any language is missing a string. To add a language, copy `ca.ts`, translate it and register it in `src/i18n/index.ts`. Corrections from native speakers are very welcome.
 
 ## Contributing
 

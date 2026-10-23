@@ -28,7 +28,7 @@ npm run typecheck
 npm test
 ```
 
-- **User-facing text** goes through `t("…")` (or `tx()` when it contains links or markup) with English as the key. Add the Catalan translation to `src/i18n/ca.ts`. If you don't speak Catalan, leave a note in the PR and we'll fill it in. `npm test` lists what's missing.
+- **User-facing text** goes through `t("…")` (or `tx()` when it contains links or markup) with English as the key. Add the translations to every file in `src/i18n/`. If you don't speak a language, put the English text there and say so in the PR, and someone will fill it in. `npm test` lists what's missing.
 - **Wiring data** lives in `src/lib/hardware`. If you change it, run `npm run docs:hardware` to regenerate `docs/hardware.md`. CI checks it's up to date.
 - **HFS changes** should keep `npm test` green. The tests cross-check our reader and writer against [machfs](https://github.com/elliotnunn/machfs), so you need Python 3 and `pip install machfs`.
 - **Protocol changes** must update `docs/protocol.md` together with the firmware and the app.

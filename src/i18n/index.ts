@@ -1,25 +1,38 @@
 // Tiny i18n: the English text is the key, other languages map it to a translation.
 // Missing translations fall back to English. `npm test` checks every t("…") literal
-// in src/ has a Catalan entry.
+// in src/ has an entry in every dictionary.
 
 import { Fragment, createElement, type ReactNode } from "react";
 import { ca } from "./ca";
+import { de } from "./de";
+import { es } from "./es";
+import { fr } from "./fr";
+import { it } from "./it";
+import { ja } from "./ja";
+import { pt } from "./pt";
 
-export type Lang = "en" | "ca";
+export type Lang = "en" | "ca" | "es" | "fr" | "de" | "it" | "pt" | "ja";
 export type LangSetting = "system" | Lang;
 
 export const LANGUAGES: { value: LangSetting; label: string }[] = [
   { value: "system", label: "System" },
   { value: "en", label: "English" },
   { value: "ca", label: "Català" },
+  { value: "es", label: "Español" },
+  { value: "fr", label: "Français" },
+  { value: "de", label: "Deutsch" },
+  { value: "it", label: "Italiano" },
+  { value: "pt", label: "Português (Brasil)" },
+  { value: "ja", label: "日本語" },
 ];
 
-const DICTS: Record<Lang, Record<string, string>> = { en: {}, ca };
+const DICTS: Record<Lang, Record<string, string>> = { en: {}, ca, es, fr, de, it, pt, ja };
 let current: Lang = "en";
 
 export function resolveLang(setting: LangSetting): Lang {
   if (setting !== "system") return setting;
-  return navigator.language.toLowerCase().startsWith("ca") ? "ca" : "en";
+  const prefix = navigator.language.toLowerCase().slice(0, 2);
+  return prefix in DICTS ? (prefix as Lang) : "en";
 }
 
 export function setLang(lang: Lang) {

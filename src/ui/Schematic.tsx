@@ -40,7 +40,8 @@ export function Schematic({ plan, hover, setHover }: { plan: WiringPlan; hover: 
           <text x={b.x} y={b.y - 8} fontSize={10.5} fontWeight={700} fill="var(--accent-text)" fontFamily="var(--mono)">{b.ref}</text>
           <text x={b.x + b.ref.length * 7 + 8} y={b.y - 8} fontSize={10.5} fill="var(--muted)">{b.subtitle}</text>
           <rect x={b.x} y={b.y} width={b.w} height={b.h} rx={b.kind === "connector" ? 10 : 3} fill="var(--surface)" stroke="var(--text-2)" strokeWidth={1.4} />
-          <text x={b.x + b.w / 2} y={b.y + 20} textAnchor="middle" fontSize={11.5} fontWeight={650} fill="var(--text)">{b.title}</text>
+          <text x={b.x + b.w / 2} y={b.y + 20} textAnchor="middle" fontSize={11.5} fontWeight={650} fill="var(--text)"
+            {...(b.title.length * 6.6 > b.w - 16 ? { textLength: b.w - 16, lengthAdjust: "spacingAndGlyphs" } : {})}>{b.title}</text>
           <line x1={b.x + 8} x2={b.x + b.w - 8} y1={b.y + 28} y2={b.y + 28} stroke="var(--line-2)" />
         </g>
       ))}

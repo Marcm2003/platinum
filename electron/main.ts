@@ -16,9 +16,15 @@ let win: BrowserWindow | null = null;
 const STRINGS = {
   en: { disks: "Mac disk images", all: "All files", destination: "Choose the destination folder", unnamed: "(unnamed)" },
   ca: { disks: "Imatges de disc Mac", all: "Tots els fitxers", destination: "Tria la carpeta de destinació", unnamed: "(sense nom)" },
+  es: { disks: "Imágenes de disco Mac", all: "Todos los archivos", destination: "Elige la carpeta de destino", unnamed: "(sin nombre)" },
+  fr: { disks: "Images disque Mac", all: "Tous les fichiers", destination: "Choisissez le dossier de destination", unnamed: "(sans nom)" },
+  de: { disks: "Mac-Disk-Images", all: "Alle Dateien", destination: "Zielordner wählen", unnamed: "(ohne Namen)" },
+  it: { disks: "Immagini disco Mac", all: "Tutti i file", destination: "Scegli la cartella di destinazione", unnamed: "(senza nome)" },
+  pt: { disks: "Imagens de disco Mac", all: "Todos os arquivos", destination: "Escolha a pasta de destino", unnamed: "(sem nome)" },
+  ja: { disks: "Mac ディスクイメージ", all: "すべてのファイル", destination: "保存先フォルダを選択", unnamed: "（名称未設定）" },
 };
 let str = STRINGS.en;
-ipcMain.on("lang:set", (_e, lang: string) => { str = lang === "ca" ? STRINGS.ca : STRINGS.en; });
+ipcMain.on("lang:set", (_e, lang: string) => { str = STRINGS[lang as keyof typeof STRINGS] ?? STRINGS.en; });
 
 // ───────────────────────── Window ─────────────────────────
 
