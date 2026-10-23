@@ -19,8 +19,9 @@ export function SettingsPage() {
       <div className="col" style={{ gap: 16 }}>
         <div className="card">
           <SettingRow title={t("Language")} desc={t("“System” follows your computer's language")}>
-            <Seg value={settings.language} onChange={(v) => patchSettings({ language: v })}
-              options={LANGUAGES.map((l) => ({ value: l.value, label: l.value === "system" ? t("System") : l.label }))} />
+            <select className="select" style={{ width: 200 }} value={settings.language} onChange={(e) => patchSettings({ language: e.target.value as typeof settings.language })}>
+              {LANGUAGES.map((l) => <option key={l.value} value={l.value}>{l.value === "system" ? t("System") : l.label}</option>)}
+            </select>
           </SettingRow>
           <SettingRow title={t("Appearance")} desc={t("Light, dark or the system setting")}>
             <Seg value={settings.theme} onChange={(v) => { patchSettings({ theme: v }); window.platinum.setTheme(v); }}
