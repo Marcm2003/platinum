@@ -1,6 +1,6 @@
 {
   "name": "platinum",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Classic Macintosh workbench: emulator, ESP32 bridge, HFS disk tool and remote debugger",
   "main": "dist-electron/main.cjs",
   "scripts": {
