@@ -35,9 +35,9 @@ Every message is one JSON object with a `t` (type) field, terminated by `\n`.
 | `key` | `c` (ADB key code), `d` (1 down / 0 up) | Key event to the Mac (translated to M0110 in M0110 mode). |
 | `mouse` | `dx`, `dy`, `b` (button 1/0) | Relative mouse movement. The app batches at ~60 Hz. |
 | `power` | — | Pulls ADB pin 2 (PSW) low for 400 ms. |
-| `cfg` | optional `mode` (`"adb"`/`"m0110"`), `baud`, `name`, `invertX`, `invertY` | Stored in flash; bridge replies with `info`. |
+| `cfg` | optional `mode` (`"adb"`/`"m0110"`), `serial` (`"agent"`/`"net"`), `baud`, `name`, `invertX`, `invertY` | Stored in flash; bridge replies with `info`. `serial: "net"` hands the Mac's serial port to the Mac network link (section 3). |
 | `wifi` | `ssid`, `pass` | Stores the credentials and restarts. |
-| `ser` | `d` (base64) | Bytes to write to the Mac's serial port. |
+| `ser` | `d` (base64) | Bytes to write to the Mac's serial port. Ignored while `serial` is `"net"`. |
 | `ble_scan` | — | Scans for BLE HID devices for 8 s. |
 | `ble_pair` / `ble_forget` | `addr` | Pair or forget a BLE keyboard/mouse. |
 | `reboot` | — | Restarts the ESP32. |
@@ -46,7 +46,7 @@ Every message is one JSON object with a `t` (type) field, terminated by `\n`.
 
 | `t` | Fields | Meaning |
 | --- | --- | --- |
-| `info` | `fw`, `board` (`esp32s3`, `esp32`, `esp32c3-oled`, `esp32c3`), `name`, `mode`, `baud`, `heap`, `uptime`, `macPolling`, `display`, `ip`, `ssid`, `rssi`, `adbAddr {kbd, mouse}` | Status, sent every 2 s and after `hello`/`cfg`. |
+| `info` | `fw`, `board` (`esp32s3`, `esp32`, `esp32c3-oled`, `esp32c3`), `name`, `mode`, `baud`, `heap`, `uptime`, `macPolling`, `display`, `ip`, `ssid`, `rssi`, `adbAddr {kbd, mouse}`, `serial`, `net {state, ip, in, out}` | Status, sent every 2 s and after `hello`/`cfg`. `net` is present when `serial` is `"net"`; `state` is `waiting`, `connecting` or `online`, `ip` is the Mac's address. |
 | `log` | `m` | Human-readable log line. |
 | `ble` | `list: [{addr, name, rssi, kind, paired, connected}]` | Known/nearby BLE HID devices. |
 | `adb` | `ev`, `addr`, `reg` | Bus activity summary (for the bus monitor). |
@@ -110,3 +110,13 @@ Programs built with Retro68 can log with `PDLog()`, `PDWarn()`, `PDError()`, `PD
 
 - **Agent running:** the agent registers Gestalt selector `'PDbg'`. Its value is the address of a ring buffer in the system heap (`pdebug_queue.h`: magic `'PDBQ'`, an `alive` flag, head/tail and 8 KB of data). `pdebug` appends records of the form `[len u16][LOG payload]`, and the agent forwards each one unchanged as a `LOG` frame. The buffer outlives the agent, because Gestalt selectors can't be removed, so on quit the agent only clears `alive`.
 - **No agent:** `pdebug` opens the Modem port itself at 57600 bps and writes `LOG` frames directly.
+
+## 3. Mac network link (PPP)
+
+With `serial: "net"` the bridge stops forwarding the Mac's serial port to the app and becomes the Mac's way onto the network. Reference implementation: `firmware/platinum-bridge/macnet.cpp`.
+
+1. **Modem emulation.** The bridge answers Hayes commands: `AT…` replies `OK`, `ATD<anything>` or `ATA` replies `CONNECT <baud>` and starts PPP. `E`, `V`, `Q`, `Z` and `I` behave as on a modem; everything else is accepted. So any Hayes modem script on the Mac works, whatever number it dials.
+2. **Direct PPP.** If a PPP frame (`0x7E`) arrives in command mode, as with MacPPP's *Hard-wired* option, PPP starts straight away.
+3. **PPP.** The bridge waits passively for the Mac's LCP request, requires no authentication, and in IPCP gives itself `172.31.73.1` and the Mac `172.31.73.2`, plus the DNS server it got from the WiFi network (or `1.1.1.1`).
+4. **Routing.** The PPP interface is NATed to the WiFi interface, which stays the default route.
+5. **Hang-up.** When the Mac closes the link the bridge sends `NO CARRIER` and returns to command mode. Plain `AT` after 1.5 s of silence also ends a stale link, for a Mac that restarted mid-call.

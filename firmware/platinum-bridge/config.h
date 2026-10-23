@@ -6,7 +6,7 @@
 //   arduino-cli compile --build-property "compiler.cpp.extra_flags=-DPLATINUM_BOARD_ESP32C3_OLED" …
 #pragma once
 
-#define FW_VERSION "0.2.0"
+#define FW_VERSION "0.3.0"
 #define FW_NAME "Platinum Bridge"
 
 // Optional SSD1306 OLED. DISPLAY_W×DISPLAY_H is the visible area; boards without a built-in

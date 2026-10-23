@@ -2,7 +2,8 @@
 //
 //  • Emulates an ADB keyboard + mouse (SE and later) or an M0110A keyboard + quadrature mouse (128K/512K/Plus)
 //  • Pairs Bluetooth LE keyboards and mice and forwards them to the Mac
-//  • Bridges the Mac's RS-422 serial port (Platinum Agent) to the app
+//  • Bridges the Mac's RS-422 serial port (Platinum Agent) to the app, or puts the Mac on the
+//    network: it answers as a modem, runs PPP and routes it to WiFi with NAT (see macnet.h)
 //  • Talks to the app over USB, WebSocket (ws://platinum.local:81) or BLE (Nordic UART)
 //
 // Protocol: newline-delimited JSON, see docs/protocol.md.
@@ -22,6 +23,7 @@
 #include "config.h"
 #include "display.h"
 #include "m0110.h"
+#include "macnet.h"
 
 static Preferences prefs;
 static WebSocketsServer ws(WS_PORT);
@@ -30,6 +32,7 @@ static HardwareSerial& macSerial = Serial1;
 
 static String bridgeName = FW_NAME;
 static String mode = "adb";  // "adb" | "m0110"
+static String serialMode = "agent";  // who owns the Mac's serial port: "agent" | "net"
 static uint32_t macBaud = MAC_DEFAULT_BAUD;
 static bool apMode = false;
 static uint32_t pswUntil = 0;
@@ -99,6 +102,14 @@ static void sendInfo() {
   d["uptime"] = millis() / 1000;
   d["macPolling"] = macPolling();
   d["display"] = display::present();
+  d["serial"] = serialMode;
+  if (serialMode == "net") {
+    JsonObject n = d["net"].to<JsonObject>();
+    n["state"] = macnet::stateName();
+    if (macnet::state() == macnet::ONLINE) n["ip"] = macnet::macAddress();
+    n["in"] = macnet::bytesIn();
+    n["out"] = macnet::bytesOut();
+  }
   if (WiFi.status() == WL_CONNECTED) {
     d["ip"] = WiFi.localIP().toString();
     d["ssid"] = WiFi.SSID();
@@ -152,6 +163,17 @@ static void flushSerial() {
 }
 
 static void pumpMacSerial() {
+  if (serialMode == "net") {
+    uint8_t b[256];
+    int n;
+    while ((n = macSerial.available()) > 0) {
+      n = macSerial.readBytes(b, min(n, (int)sizeof b));
+      serIn += n;
+      lastSerialMs = millis();
+      macnet::feed(b, n);
+    }
+    return;
+  }
   while (macSerial.available()) {
     serBuf[serLen++] = macSerial.read();
     serIn++;
@@ -173,6 +195,15 @@ static void applyMode(const String& m) {
   logf("Mode %s", mode.c_str());
 }
 
+static void applySerialMode(const String& m) {
+  if (m == serialMode || (m != "agent" && m != "net")) return;
+  if (serialMode == "net") macnet::end();
+  serialMode = m;
+  if (serialMode == "net") macnet::begin(macSerial, logf);
+  prefs.putString("serial", serialMode);
+  logf(serialMode == "net" ? "Serial port: Mac network (PPP)" : "Serial port: Platinum Agent");
+}
+
 static void handleLine(const char* line, size_t len) {
   JsonDocument d;
   if (deserializeJson(d, line, len)) return;
@@ -181,6 +212,7 @@ static void handleLine(const char* line, size_t len) {
   if (!strcmp(t, "key")) sendKey(d["c"] | 0, (d["d"] | 0) != 0);
   else if (!strcmp(t, "mouse")) sendMouse(d["dx"] | 0, d["dy"] | 0, (d["b"] | 0) != 0);
   else if (!strcmp(t, "ser")) {
+    if (serialMode == "net") return;  // the port is carrying PPP
     const char* s = d["d"] | "";
     unsigned char bin[768];
     size_t olen = 0;
@@ -193,6 +225,7 @@ static void handleLine(const char* line, size_t len) {
   }
   else if (!strcmp(t, "cfg")) {
     if (d["mode"].is<const char*>()) applyMode(d["mode"].as<String>());
+    if (d["serial"].is<const char*>()) applySerialMode(d["serial"].as<String>());
     if (d["baud"].is<uint32_t>()) { macBaud = d["baud"]; macSerial.updateBaudRate(macBaud); prefs.putUInt("baud", macBaud); }
     if (d["name"].is<const char*>()) { bridgeName = d["name"].as<String>(); prefs.putString("name", bridgeName); }
     if (d["invertX"].is<bool>() || d["invertY"].is<bool>()) m0110::setInvert(d["invertX"] | false, d["invertY"] | false);
@@ -343,7 +376,7 @@ static void updateDisplay() {
   s.ssid = s.wifi ? WiFi.SSID() : apMode ? WiFi.softAPSSID() : String();
   s.bleConnected = blehid::connectedNames(s.bleNames, 4);
   s.serIn = serIn;
-  s.serOut = serOut;
+  s.serOut = serialMode == "net" ? macnet::bytesOut() : serOut;
   s.keys = keysSent;
   s.joining = !s.wifi && !apMode && wifiConfigured;
   s.lastKeyMs = lastKeyMs;
@@ -379,6 +412,7 @@ void setup() {
   bridgeName = prefs.getString("name", FW_NAME);
   mode = prefs.getString("mode", "adb");
   macBaud = prefs.getUInt("baud", MAC_DEFAULT_BAUD);
+  serialMode = prefs.getString("serial", "agent");
 
   macSerial.begin(macBaud, SERIAL_8N1, PIN_SER_RX, PIN_SER_TX);
   macSerial.setRxBufferSize(4096);
@@ -393,6 +427,7 @@ void setup() {
   display::bootProgress(0.3f);
   setupWifi();
   display::bootDone();
+  if (serialMode == "net") macnet::begin(macSerial, logf);
   logf("%s v%s ready (%s, %s)", FW_NAME, FW_VERSION, BOARD_ID, mode.c_str());
   sendInfo();
 }
@@ -414,6 +449,13 @@ void loop() {
 
   ws.loop();
   pumpMacSerial();
+  macnet::loop();
+  static macnet::State netWas = macnet::OFF;
+  if (macnet::state() != netWas) {
+    if (macnet::state() == macnet::ONLINE) display::toast("Mac online");
+    else if (netWas == macnet::ONLINE) display::toast("Mac offline");
+    netWas = macnet::state();
+  }
 
   int pkt = udp.parsePacket();
   if (pkt) {

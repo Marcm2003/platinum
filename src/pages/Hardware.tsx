@@ -7,6 +7,7 @@ import { buildWiring } from "@/lib/hardware/wiring";
 import { BoardView, ConnectorFace } from "@/ui/WiringDiagram";
 import { Schematic } from "@/ui/Schematic";
 import { SolderGuide } from "@/ui/SolderGuide";
+import { MacNetwork } from "./MacNetwork";
 import { CopyBlock, Field, PageHead, Seg, SettingRow, Toggle, ConnectSheet } from "@/ui/components";
 import { Icon, PixelIcon } from "@/ui/icons";
 import { useCommand } from "@/ui/useCommand";
@@ -16,9 +17,9 @@ import { bestPort, boardsForChip, describePort } from "@/lib/hardware/usb";
 import type { ChipInfo, SerialPortInfo } from "@/shared/ipc";
 
 /** Keep in sync with FW_VERSION in firmware/platinum-bridge/config.h. */
-const FIRMWARE_VERSION = "0.2.0";
+const FIRMWARE_VERSION = "0.3.0";
 
-type Tab = "wiring" | "bridge" | "firmware";
+type Tab = "wiring" | "bridge" | "firmware" | "net";
 
 export function Hardware() {
   const [tab, setTab] = useState<Tab>("wiring");
@@ -29,10 +30,12 @@ export function Hardware() {
         <button className={`tab ${tab === "wiring" ? "on" : ""}`} onClick={() => setTab("wiring")}><Icon name="cable" size={14} /> {t("Wiring")}</button>
         <button className={`tab ${tab === "firmware" ? "on" : ""}`} onClick={() => setTab("firmware")}><Icon name="bolt" size={14} /> Firmware</button>
         <button className={`tab ${tab === "bridge" ? "on" : ""}`} onClick={() => setTab("bridge")}><Icon name="wifi" size={14} /> {t("Bridge & network")}</button>
+        <button className={`tab ${tab === "net" ? "on" : ""}`} onClick={() => setTab("net")}><Icon name="globe" size={14} /> {t("Mac network")}</button>
       </div>
       {tab === "wiring" && <Wiring />}
       {tab === "firmware" && <Firmware />}
       {tab === "bridge" && <BridgePanel />}
+      {tab === "net" && <MacNetwork />}
     </div>
   );
 }

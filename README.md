@@ -63,6 +63,7 @@ Choose your Mac and your ESP32 board and Platinum draws the build:
 - **Schematic**: proper part symbols with real pin numbers, wires routed so they never overlap, and power as GND / 3V3 / +5V symbols. Hover over a wire or pin to trace it.
 - **Solder guide**: every part as it looks on the bench (the BSS138 module, the MAX3488 and 74AHCT125 from above with pin 1 marked, the 2N7000's legs), and every connector from the solder side, each pad labelled with where it goes. A numbered checklist keeps track of the joints you've done.
 - **Firmware**: detects ESP32 boards as you plug them in, identifies the chip, and flashes the right image in one click.
+- **Mac network**: puts the Mac itself on your WiFi network. The bridge answers like a modem and routes the Mac's PPP connection with NAT, so MacTCP or Open Transport get an IP address with no drivers to install. Browse FrogFind, fetch files over FTP, or mount a Netatalk share. A step-by-step guide covers System 7 with MacTCP and Mac OS 7.6–9 with Open Transport.
 
 ### And more
 
@@ -93,7 +94,7 @@ Each release also includes the bridge firmware for every board and `PlatinumAgen
 
 ## The ESP32 bridge
 
-The bridge sits between your Mac and your computer. It can be the Mac's **ADB or M0110 keyboard and mouse**, carry the Mac's **RS-422 serial port** over USB, WiFi or Bluetooth (that's how Platinum Agent talks), and **power the Mac on** from the app on ADB machines with a soft-power key.
+The bridge sits between your Mac and your computer. It can be the Mac's **ADB or M0110 keyboard and mouse**, carry the Mac's **RS-422 serial port** over USB, WiFi or Bluetooth (that's how Platinum Agent talks), **put the Mac on your network** over PPP, and **power the Mac on** from the app on ADB machines with a soft-power key.
 
 A typical ADB build is an ESP32-S3 board, a BSS138 level shifter, a MAX3488 RS-422 transceiver, a 2N7000 MOSFET and two cables (S-Video for ADB, a Mac printer cable for serial). The full guide is in **[docs/hardware.md](docs/hardware.md)**: board choice, pin maps, wiring for each Mac family, connector pinouts, parts lists and a first-power-on checklist.
 
@@ -143,6 +144,7 @@ Platinum is young (v0.1). Here's where each part stands:
 | Schematic, solder guide, board detection and chip identification | ✅ Works |
 | One-click flashing from the app | 🧪 Not yet run on a board |
 | Bridge firmware: ADB / M0110, BLE HID, serial over USB/WiFi/BLE, OLED screen | 🧪 Builds for all four boards; not yet tested with a real Mac, so reports are very welcome |
+| Mac network (PPP over the serial port, NAT to WiFi) | 🧪 Builds for all four boards; not yet tested with a real Mac |
 | Platinum Agent | 🧪 Runs on System 7.5.3 in the emulator, protocol cross-tested with the app; [the serial link still needs testing on a real Mac](mac-agent/README.md#status) |
 
 ## Building from source

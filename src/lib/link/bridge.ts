@@ -20,6 +20,9 @@ export interface BridgeInfo {
   macPolling?: boolean;
   /** A status screen is connected. */
   display?: boolean;
+  /** Who owns the Mac's serial port: Platinum Agent, or the Mac's network link (PPP). */
+  serial?: "agent" | "net";
+  net?: { state: "off" | "waiting" | "connecting" | "online"; ip?: string; in: number; out: number };
 }
 
 export interface BleDevice { addr: string; name: string; rssi: number; kind: "keyboard" | "mouse" | "hid" | "unknown"; paired: boolean; connected: boolean }
@@ -95,7 +98,7 @@ export class Bridge {
   key(code: number, down: boolean) { return this.json({ t: "key", c: code, d: down ? 1 : 0 }); }
   mouse(dx: number, dy: number, button: boolean) { return this.json({ t: "mouse", dx: Math.round(dx), dy: Math.round(dy), b: button ? 1 : 0 }); }
   power() { return this.json({ t: "power" }); }
-  configure(cfg: { mode?: "adb" | "m0110"; baud?: number; name?: string }) { return this.json({ t: "cfg", ...cfg }); }
+  configure(cfg: { mode?: "adb" | "m0110"; serial?: "agent" | "net"; baud?: number; name?: string }) { return this.json({ t: "cfg", ...cfg }); }
   wifi(ssid: string, pass: string) { return this.json({ t: "wifi", ssid, pass }); }
   bleScan() { return this.json({ t: "ble_scan" }); }
   blePair(addr: string) { return this.json({ t: "ble_pair", addr }); }
