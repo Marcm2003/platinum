@@ -24,7 +24,36 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      # npm test also cross-checks the agent's protocol code (built with the runner's gcc).
       - name: Hardware docs are up to date
         run: |
           npm run docs:hardware
           git diff --exit-code docs/hardware.md || (echo "::error::docs/hardware.md is stale. Run 'npm run docs:hardware' and commit it." && exit 1)
+
+  agent:
+    runs-on: ubuntu-latest
+    container: ghcr.io/autc04/retro68:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Platinum Agent (68k)
+        working-directory: mac-agent
+        run: |
+          cmake -B build -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/m68k-apple-macos/cmake/retro68.toolchain.cmake
+          cmake --build build
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install the ESP32 core and libraries
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.3.5 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli lib install "NimBLE-Arduino" "WebSockets" "ArduinoJson" "U8g2"
+      - run: npm ci
+      - run: npm run firmware

@@ -15,7 +15,49 @@ permissions:
   contents: write
 
 jobs:
+  agent:
+    runs-on: ubuntu-latest
+    container: ghcr.io/autc04/retro68:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Platinum Agent (68k)
+        working-directory: mac-agent
+        run: |
+          cmake -B build -DCMAKE_TOOLCHAIN_FILE=/Retro68-build/toolchain/m68k-apple-macos/cmake/retro68.toolchain.cmake
+          cmake --build build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-agent
+          if-no-files-found: error
+          path: |
+            mac-agent/build/PlatinumAgent.bin
+            mac-agent/build/PlatinumAgent.dsk
+            mac-agent/build/PDebugDemo.bin
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install the ESP32 core and libraries
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.3.5 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli lib install "NimBLE-Arduino" "WebSockets" "ArduinoJson" "U8g2"
+      - run: npm ci
+      - run: npm run firmware
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          if-no-files-found: error
+          path: firmware/dist/*.bin
+
   build:
+    needs: [agent, firmware]
     strategy:
       fail-fast: false
       matrix:
@@ -27,6 +69,16 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # Bundled into the app so "Make the floppy" works without building anything.
+      - uses: actions/download-artifact@v4
+        with:
+          name: mac-agent
+          path: mac-agent/build
+      # Prebuilt bridge firmware ships inside the app too.
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: firmware/dist
       - run: npm ci
       - run: npm run dist
         env:
