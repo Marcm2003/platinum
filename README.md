@@ -98,6 +98,8 @@ The bridge sits between your Mac and your computer. It can be the Mac's **ADB or
 
 A typical ADB build is an ESP32-S3 board, a BSS138 level shifter, a MAX3488 RS-422 transceiver, a 2N7000 MOSFET and two cables (S-Video for ADB, a Mac printer cable for serial). The full guide is in **[docs/hardware.md](docs/hardware.md)**: board choice, pin maps, wiring for each Mac family, connector pinouts, parts lists and a first-power-on checklist.
 
+A ready-made **Platinum Bridge** is on the way: one board in a little Mac-shaped case, with an OLED screen, USB-C and a single connector plus an adapter cable for your Mac.
+
 ### Supported boards
 
 | Board | Firmware image | Notes |
@@ -186,7 +188,7 @@ Bug reports, photos of your bridge, reports from real Macs, translations and pul
 
 ## Credits and licence
 
-Platinum is free software under the [GNU GPL v3.0 or later](LICENSE).
+The Platinum app, the bridge firmware and Platinum Agent are free software under the [GNU GPL v3.0 or later](LICENSE): use them, study them, change them and share your changes. The ready-made Platinum Bridge's hardware design (schematic, PCB layout and manufacturing files) is not published: selling the assembled bridge is what funds the project. The do-it-yourself bridge in [docs/hardware.md](docs/hardware.md) does the same job with off-the-shelf modules.
 
 The embedded emulator is [Infinite Mac](https://infinitemac.org) by Mihai Parparita (Apache-2.0), loaded from infinitemac.org. Thank you, Mihai. The HFS catalog collation table comes from Robert Leslie's [hfsutils](https://www.mars.org/home/rob/proj/hfs/). Platinum Agent is built with [Retro68](https://github.com/autc04/Retro68). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for everything else.
 

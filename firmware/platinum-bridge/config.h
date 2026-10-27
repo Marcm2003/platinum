@@ -15,7 +15,33 @@
 #define DISPLAY_SSD1306_72X40 1   // 0.42" OLED built into ESP32-C3 "OLED" boards
 #define DISPLAY_SSD1306_128X64 2  // the common 0.96" module
 
-#if CONFIG_IDF_TARGET_ESP32S3
+#if CONFIG_IDF_TARGET_ESP32S3 && defined(PLATINUM_BOARD_PCB_V1)
+  // The Platinum Bridge PCB (hardware/pcb, rev A): an ESP32-S3-WROOM-1 with every Mac signal on
+  // one HD-15. Like the C3 boards, ADB and the M0110 keyboard share two lines (BUS1/BUS2), and
+  // the OLED module sits upside down so its header stays clear of the antenna.
+  #define BOARD_ID "pcb-v1"
+  #define PIN_ADB_DATA   4
+  #define PIN_ADB_PSW    5
+  #define PIN_KBD_CLK    4
+  #define PIN_KBD_DATA   5
+  #define PIN_SER_TX     17
+  #define PIN_SER_RX     18
+  #define PIN_MOUSE_X1   12
+  #define PIN_MOUSE_X2   13
+  #define PIN_MOUSE_Y1   14
+  #define PIN_MOUSE_Y2   15
+  #define PIN_MOUSE_SW   16
+  #define PIN_HSK_CLK    21  // HSKi: external serial clock for 230.4 kbps (not used yet)
+  #define PIN_LED        48  // WS2812B
+  #define LED_IS_RGB     1
+  #define LED_ACTIVE_LOW 0
+  #define PIN_I2C_SDA    8
+  #define PIN_I2C_SCL    9
+  #define PIN_BUTTON     0   // BOOT / PAGE
+  #define DISPLAY_KIND   DISPLAY_SSD1306_128X64
+  #define DISPLAY_ROTATE_180 1
+
+#elif CONFIG_IDF_TARGET_ESP32S3
   // ESP32-S3-DevKitC-1: dual core, native USB, RGB LED.
   #define BOARD_ID "esp32s3"
   #define PIN_ADB_DATA   4
@@ -97,6 +123,9 @@
 
 #ifndef DISPLAY_BUILT_IN
   #define DISPLAY_BUILT_IN 0
+#endif
+#ifndef DISPLAY_ROTATE_180
+  #define DISPLAY_ROTATE_180 0
 #endif
 
 // Timing-critical bus tasks: on dual-core chips they get core 1 to themselves (WiFi/BT live on

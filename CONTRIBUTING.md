@@ -34,6 +34,10 @@ npm test
 - **Protocol changes** must update `docs/protocol.md` together with the firmware and the app.
 - Match the style of the surrounding code; keep comments for the *why*.
 
+## Licensing of contributions
+
+Your contributions are licensed under the project's licence, the GPL-3.0-or-later. By opening a pull request you also agree that the project's maintainer may relicense your contribution together with the rest of Platinum in the future (for example to a later GPL version or another open-source licence), so the project can't get stuck. You keep the copyright on your work.
+
 ## Never commit
 
 Apple ROMs, system software or other copyrighted disk images. The `.gitignore` blocks the common extensions. Please don't work around it.
