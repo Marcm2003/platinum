@@ -22,6 +22,7 @@
 #include "blehid.h"
 #include "config.h"
 #include "display.h"
+#include "joystick.h"
 #include "m0110.h"
 #include "macnet.h"
 
@@ -204,6 +205,16 @@ static void applySerialMode(const String& m) {
   logf(serialMode == "net" ? "Serial port: Mac network (PPP)" : "Serial port: Platinum Agent");
 }
 
+/** Holds the ADB power-on line for a moment, like the keyboard's power key. */
+static void powerOn() {
+  // On the ESP32-C3 the PSW pin doubles as the M0110 keyboard's DATA line.
+  if (mode != "adb") { display::toast("ADB Macs only"); return; }
+  digitalWrite(PIN_ADB_PSW, HIGH);
+  pswUntil = millis() + 400;
+  logf("Power-on");
+  display::toast("Power on");
+}
+
 static void handleLine(const char* line, size_t len) {
   JsonDocument d;
   if (deserializeJson(d, line, len)) return;
@@ -219,10 +230,7 @@ static void handleLine(const char* line, size_t len) {
     if (!mbedtls_base64_decode(bin, sizeof bin, &olen, (const unsigned char*)s, strlen(s))) { macSerial.write(bin, olen); serOut += olen; lastSerialMs = millis(); }
   }
   else if (!strcmp(t, "hello")) { sendInfo(); sendBleList(); display::toast("Platinum connected"); }
-  else if (!strcmp(t, "power")) {
-    // On the ESP32-C3 the PSW pin doubles as the M0110 keyboard's DATA line.
-    if (mode == "adb") { digitalWrite(PIN_ADB_PSW, HIGH); pswUntil = millis() + 400; logf("Power-on"); display::toast("Power on"); }
-  }
+  else if (!strcmp(t, "power")) powerOn();
   else if (!strcmp(t, "cfg")) {
     if (d["mode"].is<const char*>()) applyMode(d["mode"].as<String>());
     if (d["serial"].is<const char*>()) applySerialMode(d["serial"].as<String>());
@@ -385,16 +393,147 @@ static void updateDisplay() {
   display::update(s);
 }
 
-/** BOOT button: short press shows the next page. */
-static void pollButton() {
-  static bool was = false;
-  static uint32_t since = 0;
-  bool down = digitalRead(PIN_BUTTON) == LOW;
-  if (down != was && millis() - since > 30) {
-    since = millis();
-    was = down;
-    if (down) display::nextPage();
+// ───────── Front panel ─────────
+// With only the BOOT button, a press shows the next page. With the joystick, left and right page
+// through the screen and the centre press opens a menu: up and down choose, the press or right
+// runs, left goes back. It closes on its own after a while.
+
+enum MenuId : uint8_t { MENU_CLOSED, MENU_MAIN, MENU_BLE };
+enum MainItem : uint8_t { M_MAC, M_SERIAL, M_POWER, M_BLE, M_WIFI, M_RESTART, M_FIRMWARE, M_COUNT };
+static MenuId menuAt = MENU_CLOSED;
+static uint8_t menuSel = 0;
+static int menuArmed = -1;  // the item waiting for a second press to confirm
+static uint32_t menuInputMs = 0, menuDrawMs = 0, bleReadMs = 0, bleScanUntil = 0;
+
+// The Bluetooth page lists keyboards and mice from the last scan, and the bonded ones.
+static const uint8_t BLE_MAX = 8;
+static String bleAddr[BLE_MAX], bleName[BLE_MAX];
+static const char* bleState[BLE_MAX];
+static uint8_t bleCount = 0;
+
+static void readBleList() {
+  bleReadMs = millis();
+  JsonDocument d;
+  if (deserializeJson(d, blehid::listJson())) return;
+  bleCount = 0;
+  for (JsonObject o : d.as<JsonArray>()) {
+    if (bleCount == BLE_MAX) break;
+    String name = o["name"] | "";
+    bool paired = o["paired"] | false;
+    if (!strcmp(o["kind"] | "unknown", "unknown") && !paired && !name.length()) continue;
+    bleAddr[bleCount] = o["addr"] | "";
+    bleName[bleCount] = name.length() ? name : bleAddr[bleCount];
+    bleState[bleCount] = (o["connected"] | false) ? "on" : paired ? "paired" : nullptr;
+    bleCount++;
   }
+}
+
+static uint8_t menuCount() { return menuAt == MENU_MAIN ? M_COUNT : bleCount + 1; }
+
+static void drawMenu() {
+  menuDrawMs = millis();
+  if (menuSel >= menuCount()) menuSel = menuCount() - 1;
+  if (menuAt == MENU_MAIN) {
+    static const char* const labels[M_COUNT] = {"Mac", "Serial port", "Power on Mac", "Bluetooth", "Forget WiFi", "Restart", "Firmware"};
+    const char* values[M_COUNT] = {
+        mode == "adb" ? "ADB" : "M0110", serialMode == "net" ? "Network" : "Agent", nullptr, "Pair >",
+        menuArmed == M_WIFI ? "Sure?" : nullptr, menuArmed == M_RESTART ? "Sure?" : nullptr, FW_VERSION};
+    display::menu("Settings", labels, values, M_COUNT, menuSel);
+  } else {
+    const char* labels[BLE_MAX + 1];
+    const char* values[BLE_MAX + 1];
+    for (uint8_t i = 0; i < bleCount; i++) { labels[i] = bleName[i].c_str(); values[i] = bleState[i]; }
+    labels[bleCount] = millis() < bleScanUntil ? "Searching..." : "Search again";
+    values[bleCount] = nullptr;
+    display::menu("Bluetooth", labels, values, bleCount + 1, menuSel);
+  }
+}
+
+static void closeMenu() {
+  menuAt = MENU_CLOSED;
+  display::hideMenu();
+}
+
+static void bleSearch() {
+  blehid::scan(8000);
+  bleScanUntil = millis() + 8000;
+  readBleList();
+}
+
+/** Asks for a second press first; true once confirmed. */
+static bool confirmed(uint8_t item) {
+  if (menuArmed == item) return true;
+  menuArmed = item;
+  return false;
+}
+
+static void runMain() {
+  switch (menuSel) {
+    case M_MAC: applyMode(mode == "adb" ? "m0110" : "adb"); sendInfo(); break;
+    case M_SERIAL: applySerialMode(serialMode == "net" ? "agent" : "net"); sendInfo(); break;
+    case M_POWER: powerOn(); break;
+    case M_BLE: menuAt = MENU_BLE; menuSel = 0; bleSearch(); break;
+    case M_WIFI:
+      if (!confirmed(M_WIFI)) break;
+      prefs.remove("ssid");
+      prefs.remove("pass");
+      [[fallthrough]];  // restart into access-point mode
+    case M_RESTART:
+      if (menuSel == M_RESTART && !confirmed(M_RESTART)) break;
+      display::toast("Restarting");
+      drawMenu();
+      delay(600);
+      ESP.restart();
+  }
+}
+
+static void runBle() {
+  if (menuSel == bleCount) { bleSearch(); return; }
+  if (bleState[menuSel]) { display::toast("Already paired"); return; }
+  display::toast("Pairing...");
+  drawMenu();
+  bool ok = blehid::pair(bleAddr[menuSel]);
+  logf(ok ? "Paired %s" : "Could not pair %s", bleAddr[menuSel].c_str());
+  if (ok) display::toast("Paired"); else display::toast("Pair failed");
+  sendBleList();
+  readBleList();
+}
+
+static void onJoystick(joystick::Event e) {
+  using namespace joystick;
+  if (!present()) {
+    if (e == PRESS) display::nextPage();
+    return;
+  }
+  logf("Joystick %s", name(e));
+  menuInputMs = millis();
+  if (menuAt == MENU_CLOSED) {
+    if (e == PRESS) { menuAt = MENU_MAIN; menuSel = 0; menuArmed = -1; drawMenu(); }
+    else if (e == RIGHT || e == DOWN) display::nextPage();
+    else display::prevPage();
+    return;
+  }
+  uint8_t n = menuCount();
+  if (e == UP) { menuSel = (menuSel + n - 1) % n; menuArmed = -1; }
+  else if (e == DOWN) { menuSel = (menuSel + 1) % n; menuArmed = -1; }
+  else if (e == LEFT) {
+    if (menuAt == MENU_MAIN) { closeMenu(); return; }
+    menuAt = MENU_MAIN;
+    menuSel = M_BLE;
+  }
+  else if (menuAt == MENU_MAIN) runMain();
+  else runBle();
+  drawMenu();
+}
+
+static void pollFrontPanel() {
+  joystick::Event e = joystick::poll();
+  if (e) onJoystick(e);
+  if (menuAt == MENU_CLOSED) return;
+  uint32_t now = millis();
+  if (now - menuInputMs > 20000) { closeMenu(); return; }
+  if (menuAt == MENU_BLE && now - bleReadMs > 1000) readBleList();
+  if (now - menuDrawMs > 250) drawMenu();  // toasts, values and the scan list change on their own
 }
 
 void setup() {
@@ -403,7 +542,7 @@ void setup() {
   pinMode(PIN_LED, OUTPUT);
 #endif
   setLed(0, 0, 24);
-  pinMode(PIN_BUTTON, INPUT_PULLUP);
+  joystick::begin();
   display::begin();
   pinMode(PIN_ADB_PSW, OUTPUT);
   digitalWrite(PIN_ADB_PSW, LOW);
@@ -486,7 +625,7 @@ void loop() {
   blehid::maintain();
   if (blehid::listChanged()) sendBleList();
 
-  pollButton();
+  pollFrontPanel();
   updateDisplay();
 
   if (millis() - lastInfo > 2000) {

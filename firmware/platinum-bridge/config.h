@@ -6,7 +6,7 @@
 //   arduino-cli compile --build-property "compiler.cpp.extra_flags=-DPLATINUM_BOARD_ESP32C3_OLED" …
 #pragma once
 
-#define FW_VERSION "0.3.0"
+#define FW_VERSION "0.4.0"
 #define FW_NAME "Platinum Bridge"
 
 // Optional SSD1306 OLED. DISPLAY_W×DISPLAY_H is the visible area; boards without a built-in
@@ -15,7 +15,35 @@
 #define DISPLAY_SSD1306_72X40 1   // 0.42" OLED built into ESP32-C3 "OLED" boards
 #define DISPLAY_SSD1306_128X64 2  // the common 0.96" module
 
-#if CONFIG_IDF_TARGET_ESP32S3 && defined(PLATINUM_BOARD_PCB_V1)
+#if CONFIG_IDF_TARGET_ESP32S3 && defined(PLATINUM_BOARD_PCB_V2)
+  // The Platinum Bridge PCB, rev B: the rev A pinout, with the screen, LED and a 5-way joystick
+  // on a front board. The joystick's centre press is BOOT; its four directions pull PIN_JOY to
+  // different voltages through a resistor ladder (see joystick.cpp). The OLED sits upright.
+  #define BOARD_ID "pcb-v2"
+  #define PIN_ADB_DATA   4
+  #define PIN_ADB_PSW    5
+  #define PIN_KBD_CLK    4
+  #define PIN_KBD_DATA   5
+  #define PIN_SER_TX     17
+  #define PIN_SER_RX     18
+  #define PIN_MOUSE_X1   12
+  #define PIN_MOUSE_X2   13
+  #define PIN_MOUSE_Y1   14
+  #define PIN_MOUSE_Y2   15
+  #define PIN_MOUSE_SW   16
+  #define PIN_HSK_CLK    21
+  #define PIN_LED        48  // WS2812B-2020 behind the light pipe
+  #define LED_IS_RGB     1
+  #define LED_ACTIVE_LOW 0
+  #define PIN_I2C_SDA    8
+  #define PIN_I2C_SCL    9
+  #define PIN_BUTTON     0   // joystick centre press
+  #define PIN_JOY        6   // joystick directions (ADC1)
+  #define JOY_DIRS       "URDL"  // the direction of the switch's A, B, C and D contacts as fitted
+  #define DISPLAY_KIND   DISPLAY_SSD1306_128X64
+  #define DISPLAY_ROTATE_180 0
+
+#elif CONFIG_IDF_TARGET_ESP32S3 && defined(PLATINUM_BOARD_PCB_V1)
   // The Platinum Bridge PCB (hardware/pcb, rev A): an ESP32-S3-WROOM-1 with every Mac signal on
   // one HD-15. Like the C3 boards, ADB and the M0110 keyboard share two lines (BUS1/BUS2), and
   // the OLED module sits upside down so its header stays clear of the antenna.
@@ -126,6 +154,9 @@
 #endif
 #ifndef DISPLAY_ROTATE_180
   #define DISPLAY_ROTATE_180 0
+#endif
+#ifndef PIN_JOY
+  #define PIN_JOY -1  // no joystick: the BOOT button alone pages through the screen
 #endif
 
 // Timing-critical bus tasks: on dual-core chips they get core 1 to themselves (WiFi/BT live on

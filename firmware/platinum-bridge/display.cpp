@@ -81,6 +81,29 @@ void nextPage() {
   lastDraw = 0;
 }
 
+void prevPage() {
+  page = (page + 3) % 4;
+  toastUntil = 0;
+  lastDraw = 0;
+}
+
+static bool menuOpen = false;
+
+void menu(const char* title, const char* const* labels, const char* const* values, uint8_t count, uint8_t selected) {
+  if (!found) return;
+  menuOpen = true;
+  uint32_t now = millis();
+  MenuView m = {title, labels, values, count, selected, now < toastUntil ? toastMsg.c_str() : nullptr};
+  screen_menu(oled.getU8g2(), &m);
+  show();
+  lastDraw = now;
+}
+
+void hideMenu() {
+  menuOpen = false;
+  lastDraw = 0;
+}
+
 void toast(const String& msg) {
   toastMsg = msg;
   toastUntil = millis() + 2500;
@@ -96,7 +119,7 @@ void error(uint8_t code, const char* text, uint32_t forMs) {
 }
 
 void update(const Status& s) {
-  if (!found) return;
+  if (!found || menuOpen) return;
   uint32_t now = millis();
   if (now - lastDraw < 100) return;
   lastDraw = now;
@@ -138,6 +161,9 @@ void bootProgress(float) {}
 void bootDone() {}
 void update(const Status&) {}
 void nextPage() {}
+void prevPage() {}
+void menu(const char*, const char* const*, const char* const*, uint8_t, uint8_t) {}
+void hideMenu() {}
 void toast(const String&) {}
 void error(uint8_t, const char*, uint32_t) {}
 }  // namespace display

@@ -30,6 +30,15 @@ struct ScreenState {
   const char* toast;       // overlay message, or nullptr
 };
 
+/** A list on the front-panel menu. */
+struct MenuView {
+  const char* title;
+  const char* const* labels;
+  const char* const* values;  // shown on the right; an entry may be nullptr
+  uint8_t count, selected;
+  const char* toast;
+};
+
 /** Finder-style zoom rectangles opening from the centre; frame 0..7. */
 void screen_zoom(u8g2_t* g, uint8_t frame);
 /** The happy Mac on its own, centred. */
@@ -40,3 +49,5 @@ void screen_welcome(u8g2_t* g, float progress, uint32_t now);
 void screen_bomb(u8g2_t* g, uint8_t id, const char* why);
 /** One of the four pages, plus any toast. */
 void screen_status(u8g2_t* g, const ScreenState* s);
+/** The front-panel menu: a title bar and the list, the selected row inverted. */
+void screen_menu(u8g2_t* g, const MenuView* m);

@@ -254,3 +254,35 @@ void screen_status(u8g2_t* g, const ScreenState* s) {
   }
   if (s->toast) toast(g, s->toast, l);
 }
+
+void screen_menu(u8g2_t* g, const MenuView* m) {
+  Look l = look(g);
+  u8g2_ClearBuffer(g);
+  u8g2_SetDrawColor(g, 1);
+  u8g2_SetFontMode(g, 1);
+  header(g, m->title, nullptr, l);
+
+  // As many rows as fit under the title, scrolled to keep the selection in view.
+  int rows = (l.h - l.row - 1) / l.row;
+  int first = m->selected < rows ? 0 : m->selected - rows + 1;
+  bool scroll = m->count > rows;
+  int right = scroll ? l.w - 4 : l.w;
+  for (int i = 0; i < rows && first + i < m->count; i++) {
+    int item = first + i, top = l.row + 1 + i * l.row, y = top + l.row - 2;
+    bool sel = item == m->selected;
+    if (sel) { u8g2_DrawRBox(g, 0, top, right, l.row, 2); u8g2_SetDrawColor(g, 0); }
+    const char* v = m->values ? m->values[item] : nullptr;
+    int vw = v ? (int)u8g2_GetStrWidth(g, v) : 0;
+    text(g, 2, y, m->labels[item], right - 4 - (v ? vw + 4 : 0));
+    if (v) u8g2_DrawStr(g, right - vw - 2, y, v);
+    u8g2_SetDrawColor(g, 1);
+  }
+  if (scroll) {
+    int track = l.h - l.row - 2, h = track * rows / m->count;
+    if (h < 3) h = 3;
+    int y = l.row + 1 + (track - h) * first / (m->count - rows);
+    u8g2_DrawVLine(g, l.w - 2, l.row + 1, track);
+    u8g2_DrawBox(g, l.w - 3, y, 3, h);
+  }
+  if (m->toast) toast(g, m->toast, l);
+}

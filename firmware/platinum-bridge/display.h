@@ -29,6 +29,10 @@ void bootProgress(float p);
 void bootDone();
 void update(const Status& s);  // redraws at most every 100 ms
 void nextPage();
+void prevPage();
+/** Shows the front-panel menu in place of the status pages until hideMenu(). */
+void menu(const char* title, const char* const* labels, const char* const* values, uint8_t count, uint8_t selected);
+void hideMenu();
 void toast(const String& msg);  // shown over the current page for a few seconds
 void error(uint8_t code, const char* text, uint32_t forMs);
 
