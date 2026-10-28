@@ -100,6 +100,8 @@ A typical ADB build is an ESP32-S3 board, a BSS138 level shifter, a MAX3488 RS-4
 
 A ready-made **Platinum Bridge** is on the way: one board in a little Mac-shaped case, with an OLED screen, USB-C and a single connector plus an adapter cable for your Mac.
 
+<p align="center"><img src="docs/images/platinum-bridge.webp" width="640" alt="Platinum Bridge: a small platinum-grey case shaped like a compact Mac, with a status screen showing a sleeping Mac, a green status light, a joystick and a microSD card in its slot (render)"></p>
+
 ### Supported boards
 
 | Board | Firmware image | Notes |
