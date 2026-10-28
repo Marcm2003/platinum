@@ -19,13 +19,14 @@
   // The Platinum Bridge PCB, rev B: the rev A pinout, with the screen, LED and a 5-way joystick
   // on a front board. The joystick's centre press is BOOT; its four directions pull PIN_JOY to
   // different voltages through a resistor ladder (see joystick.cpp). The OLED sits upright.
-  // Rev C adds a microSD card on a board of its own, over an FFC, in SPI mode.
+  // Rev C moves the module to the front-left corner and adds a microSD card on a board of its
+  // own, over an FFC, in SPI mode; the front board comes in on an FFC too (same lines).
   #if defined(PLATINUM_BOARD_PCB_V3)
     #define BOARD_ID "pcb-v3"
-    #define PIN_SD_SCK   39
-    #define PIN_SD_MOSI  40
-    #define PIN_SD_MISO  41
-    #define PIN_SD_CS    42
+    #define PIN_SD_SCK   10
+    #define PIN_SD_MOSI  11
+    #define PIN_SD_MISO  47
+    #define PIN_SD_CS    7
     #define PIN_SD_DET   2   // low with a card in
   #else
     #define BOARD_ID "pcb-v2"
