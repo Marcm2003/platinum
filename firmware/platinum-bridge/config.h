@@ -6,7 +6,7 @@
 //   arduino-cli compile --build-property "compiler.cpp.extra_flags=-DPLATINUM_BOARD_ESP32C3_OLED" …
 #pragma once
 
-#define FW_VERSION "0.4.0"
+#define FW_VERSION "0.5.0"
 #define FW_NAME "Platinum Bridge"
 
 // Optional SSD1306 OLED. DISPLAY_W×DISPLAY_H is the visible area; boards without a built-in
@@ -15,11 +15,21 @@
 #define DISPLAY_SSD1306_72X40 1   // 0.42" OLED built into ESP32-C3 "OLED" boards
 #define DISPLAY_SSD1306_128X64 2  // the common 0.96" module
 
-#if CONFIG_IDF_TARGET_ESP32S3 && defined(PLATINUM_BOARD_PCB_V2)
+#if CONFIG_IDF_TARGET_ESP32S3 && (defined(PLATINUM_BOARD_PCB_V2) || defined(PLATINUM_BOARD_PCB_V3))
   // The Platinum Bridge PCB, rev B: the rev A pinout, with the screen, LED and a 5-way joystick
   // on a front board. The joystick's centre press is BOOT; its four directions pull PIN_JOY to
   // different voltages through a resistor ladder (see joystick.cpp). The OLED sits upright.
-  #define BOARD_ID "pcb-v2"
+  // Rev C adds a microSD card on a board of its own, over an FFC, in SPI mode.
+  #if defined(PLATINUM_BOARD_PCB_V3)
+    #define BOARD_ID "pcb-v3"
+    #define PIN_SD_SCK   39
+    #define PIN_SD_MOSI  40
+    #define PIN_SD_MISO  41
+    #define PIN_SD_CS    42
+    #define PIN_SD_DET   2   // low with a card in
+  #else
+    #define BOARD_ID "pcb-v2"
+  #endif
   #define PIN_ADB_DATA   4
   #define PIN_ADB_PSW    5
   #define PIN_KBD_CLK    4
@@ -157,6 +167,9 @@
 #endif
 #ifndef PIN_JOY
   #define PIN_JOY -1  // no joystick: the BOOT button alone pages through the screen
+#endif
+#ifndef PIN_SD_CS
+  #define PIN_SD_CS -1  // no card slot
 #endif
 
 // Timing-critical bus tasks: on dual-core chips they get core 1 to themselves (WiFi/BT live on

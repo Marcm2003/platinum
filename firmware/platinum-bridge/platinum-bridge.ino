@@ -25,6 +25,7 @@
 #include "joystick.h"
 #include "m0110.h"
 #include "macnet.h"
+#include "sdcard.h"
 
 static Preferences prefs;
 static WebSocketsServer ws(WS_PORT);
@@ -119,6 +120,12 @@ static void sendInfo() {
     d["ip"] = WiFi.softAPIP().toString();
     d["ssid"] = WiFi.softAPSSID();
     d["rssi"] = 0;
+  }
+  if (sdcard::present()) {
+    JsonObject c = d["sd"].to<JsonObject>();
+    c["mounted"] = sdcard::mounted();
+    c["total"] = sdcard::totalBytes();
+    c["used"] = sdcard::usedBytes();
   }
   if (mode == "adb") {
     adb::Stats s = adb::stats();
@@ -536,6 +543,20 @@ static void pollFrontPanel() {
   if (now - menuDrawMs > 250) drawMenu();  // toasts, values and the scan list change on their own
 }
 
+static void reportSd(sdcard::Change c) {
+  if (c == sdcard::MOUNTED) {
+    logf("SD card: %llu MB", sdcard::totalBytes() / (1024 * 1024));
+    display::toast("SD card in");
+  } else if (c == sdcard::REMOVED) {
+    logf("SD card out");
+    display::toast("SD card out");
+  } else if (c == sdcard::FAILED) {
+    logf("SD card in, but it didn't mount (FAT32 or exFAT?)");
+    display::toast("SD unreadable");
+  }
+  if (c != sdcard::NONE) sendInfo();
+}
+
 void setup() {
   Serial.begin(USB_BAUD);
 #if !LED_IS_RGB
@@ -568,6 +589,7 @@ void setup() {
   display::bootDone();
   if (serialMode == "net") macnet::begin(macSerial, logf);
   logf("%s v%s ready (%s, %s)", FW_NAME, FW_VERSION, BOARD_ID, mode.c_str());
+  reportSd(sdcard::begin());
   sendInfo();
 }
 
@@ -626,6 +648,7 @@ void loop() {
   if (blehid::listChanged()) sendBleList();
 
   pollFrontPanel();
+  reportSd(sdcard::poll());
   updateDisplay();
 
   if (millis() - lastInfo > 2000) {
